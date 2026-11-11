@@ -239,6 +239,8 @@ The `optChain` and `nullish` rules are exceptions: their scrutinee can be any ex
 
 The statement-level discriminant rules require the scrutinee to be a simple var (`x.kind === "v"` requires `x` to be a var; likewise the `Array.isArray(x)` statement forms). Transform's `emitMatchStmt` does the variant destructuring (replaces `x.field` with the variant binder). Discriminator must be the named discriminant field of a user `discriminated-union` type. The expression-form `Array.isArray` rules relax this to any narrowable path (var or field chain).
 
+**Checking narrow's output.** `narrow-checks.ts` reports optional values that reach transform unwrapped and `someMatch` binders that collide with user names or enclosing binders; `tests/narrow-checks.test.ts` runs it over every example and fixture. `fuzz/narrowing-fuzz.ts` generates small modules that guard optional values and then use them, and reports modules that fail those checks or `dafny resolve`, shrunk to a minimal module. Run it from `tools/` with `npm run fuzz:narrowing`; `--help` lists the seed, run-count and replay options. It is not part of the test suite.
+
 ## Peephole Rules
 
 Local IR-to-IR rewrites applied bottom-up to fixed point at each node, in `peephole.ts`. They eliminate Some/None ceremony that comes from `Map.get(k)` and `Record<K,V>` index access (both lowered to `methodCall(map, "get", [k])`, which `dafny-emit` renders as `(if k in m then Some(m[k]) else None)`).

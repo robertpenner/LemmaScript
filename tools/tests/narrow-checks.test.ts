@@ -209,7 +209,9 @@ test("narrow output for every example and fixture passes both checks", () => {
 // Shapes from midspiral/LemmaScript#242 (open at the time of writing): a presence
 // check guarding the rest of an `&&`/`||` chain, including nested-path `||`
 // absence checks that #242 fixes without testing. `main` emits the
-// unwrapped Option and Dafny rejects every function in KNOWN_BUGS. When #242
+// unwrapped Option for every function in KNOWN_BUGS; `dafny resolve` rejected
+// each shape when it was added (see AFK_RUNS/*-selfrun-bugs.md, B7 and B12).
+// This test compares only the flagged names and does not run Dafny. When #242
 // lands, this test fails; delete the fixed names from KNOWN_BUGS.
 const chainSource = `
 export interface Leaf { value?: number }

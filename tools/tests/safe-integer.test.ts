@@ -73,3 +73,16 @@ test("Lean lowers Number.isSafeInteger to the 2^53 - 1 bound", () => {
   assert.doesNotMatch(output, /isSafeInteger/, output);
   assert.match(output, /-9007199254740991 ≤ n ∧ n ≤ 9007199254740991/, output);
 });
+
+// JavaScript: Number.isSafeInteger(5n) === false, because a bigint is not a
+// number. The integer bound would make it true, so the call is rejected.
+test("Number.isSafeInteger of a bigint is rejected", () => {
+  const project = new Project({ compilerOptions: { strict: true,
+    target: ScriptTarget.ESNext, lib: ["lib.esnext.d.ts"], types: [], skipLibCheck: true } });
+  const file = project.createSourceFile("safe-big.ts",
+    "export function isSafeBig(b: bigint): boolean { return Number.isSafeInteger(b); }\n");
+  assert.deepEqual(project.getPreEmitDiagnostics(), [], "the regression must be valid TypeScript");
+  const mod = narrowModule(resolveModule(extractModule(file)));
+  assert.throws(() => transformModuleDafny(mod), /Number\.isSafeInteger\(\) of a bigint is not supported/);
+  assert.throws(() => transformModuleLean(mod), /Number\.isSafeInteger\(\) of a bigint is not supported/);
+});

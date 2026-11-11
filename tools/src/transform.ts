@@ -849,7 +849,12 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
         throw new Error(`${e.fn.name}() of a ${e.args[0].ty.kind} is not supported`);
       }
       // Number.isSafeInteger(n) on an integer → |n| <= 2^53 - 1. `number` is an
-      // unbounded integer in the model, so the JS bound must be stated.
+      // unbounded integer in the model, so the JS bound must be stated. A bigint
+      // is never a safe integer in JS, so the bound would be wrong for it.
+      if (e.fn.kind === "field" && e.fn.obj.kind === "var" && e.fn.obj.name === "Number" &&
+          e.fn.field === "isSafeInteger" && e.args.length === 1 && e.args[0].ty.kind === "int" && e.args[0].ty.big) {
+        throw new Error("Number.isSafeInteger() of a bigint is not supported");
+      }
       if (e.fn.kind === "field" && e.fn.obj.kind === "var" && e.fn.obj.name === "Number" &&
           e.fn.field === "isSafeInteger" && e.args.length === 1 && isIntegral(e.args[0].ty)) {
         const n = lowerExpr(e.args[0], binds);

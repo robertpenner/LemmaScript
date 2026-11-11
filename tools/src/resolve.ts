@@ -571,15 +571,13 @@ function inferLambdaParamTypes(fn: TExpr, rawArgs: RawExpr[], ctx?: Ctx): RawExp
     }
   }
   if (hofShape === "unary" && fn.kind === "field" && fn.obj.ty.kind === "array" &&
-      rawArgs.length >= 1 && rawArgs[0].kind === "lambda" &&
-      rawArgs[0].params.length >= 1 && !rawArgs[0].params[0].tsType) {
-    const elemTy = fn.obj.ty.elem;
-    const tsType = tyToTsStr(elemTy);
-    if (tsType) {
-      const lam = rawArgs[0];
-      const updatedParams = [{ ...lam.params[0], tsType }, ...lam.params.slice(1)];
-      return [{ ...lam, params: updatedParams }, ...rawArgs.slice(1)];
-    }
+      rawArgs.length >= 1 && rawArgs[0].kind === "lambda" && rawArgs[0].params.length >= 1) {
+    const lam = rawArgs[0];
+    const elemTs = lam.params[0].tsType ?? tyToTsStr(fn.obj.ty.elem);
+    // A unary HOF's second callback parameter is the element index.
+    const updatedParams = lam.params.map((p, i) =>
+      p.tsType || i > 1 ? p : i === 0 ? (elemTs ? { ...p, tsType: elemTs } : p) : { ...p, tsType: "number" });
+    return [{ ...lam, params: updatedParams }, ...rawArgs.slice(1)];
   }
   // Named-callee propagation: when an argument position expects a function
   // type, infer the lambda's param types from that function type. Aliases

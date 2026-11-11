@@ -34,6 +34,51 @@ function comprehensionBinder(lam: Extract<Expr, { kind: "lambda" }>, value: Expr
   return { binder: escapeName(fresh), body: renameFreeVar(value, rawName, fresh) };
 }
 
+/** Receiver and index names for a comprehension that visits `obj` by index and
+ *  applies `lam` to each element. A non-variable receiver is bound once to a
+ *  fresh `sBase` name; the index name avoids every name the receiver or lambda
+ *  mentions. */
+function indexedComprehensionNames(obj: Expr, lam: Expr, emittedObj: string, sBase: string, iBase: string):
+    { s: string; idx: string; bind: boolean } {
+  const fresh = (base: string, taken: (n: string) => boolean): string => {
+    let name = base;
+    for (let n = 2; taken(name); n++) name = `${base}${n}`;
+    return name;
+  };
+  const taken = (n: string): boolean =>
+    usesName(obj, n) || usesName(lam, n) ||
+    (lam.kind === "lambda" && (lam.params.some(pp => pp.name === n) ||
+      usesNameInStmts(lam.body, n)));
+  const bind = obj.kind !== "var";
+  const s = bind ? fresh(sBase, taken) : emittedObj;
+  const idx = fresh(iBase, n => taken(n) || n === s);
+  return { s, idx, bind };
+}
+
+/** Beta-reduce a single-return callback `(x) => e` or `(x, i) => e` at index
+ *  `idx` of `s`: binds the element (and the index, when the callback names
+ *  one) with `var`. Null when the argument is not such a lambda. */
+function inlineIndexedLambda(lam: Expr, s: string, idx: string): string | null {
+  if (lam.kind !== "lambda" || lam.params.length < 1 || lam.params.length > 2 ||
+      lam.body.length !== 1 || lam.body[0].kind !== "return") return null;
+  const elem = `var ${escapeName(lam.params[0].name)} := ${s}[${idx}]; `;
+  const index = lam.params.length === 2 ? `var ${escapeName(lam.params[1].name)} := ${idx}; ` : "";
+  return `${elem}${index}${emitExpr(lam.body[0].value)}`;
+}
+
+/** `every`/`some` whose callback names the element index: quantify over
+ *  indices instead of elements, which have no index to bind. Null for a
+ *  callback without an index parameter, which keeps its element lowering. */
+function indexedQuantifier(obj: Expr, lam: Expr, emittedObj: string, quantifier: "forall" | "exists",
+    connective: "==>" | "&&"): string | null {
+  if (lam.kind !== "lambda" || lam.params.length !== 2) return null;
+  const { s, idx, bind } = indexedComprehensionNames(obj, lam, emittedObj, "s_q", "i_q");
+  const core = inlineIndexedLambda(lam, s, idx);
+  if (core === null) return null;
+  const q = `(${quantifier} ${idx} :: 0 <= ${idx} < |${s}| ${connective} (${core}))`;
+  return bind ? `(var ${s} := ${emittedObj}; ${q})` : q;
+}
+
 // ── Ty → Dafny type string ─────────────────────────────────
 
 function tyToDafny(ty: Ty): string {
@@ -355,23 +400,11 @@ function emitExpr(e: Expr): string {
           // Name freshness is a local IR-level check until a backend name
           // allocator exists.
           const lam = e.args[0];
-          const fresh = (base: string, taken: (n: string) => boolean): string => {
-            let name = base;
-            for (let n = 2; taken(name); n++) name = `${base}${n}`;
-            return name;
-          };
-          const taken = (n: string): boolean =>
-            usesName(e.obj, n) || usesName(lam, n) ||
-            (lam.kind === "lambda" && (lam.params.some(pp => pp.name === n) ||
-              usesNameInStmts(lam.body, n)));
-          const bind = e.obj.kind !== "var";
-          const s = bind ? fresh("s_map", taken) : obj;
-          const idx = fresh("i_map", n => taken(n) || n === s);
+          const { s, idx, bind } = indexedComprehensionNames(e.obj, lam, obj, "s_map", "i_map");
           let core: string;
-          if (lam.kind === "lambda" && lam.params.length === 1 &&
-              lam.body.length === 1 && lam.body[0].kind === "return") {
-            const p = escapeName(lam.params[0].name);
-            core = `var ${p} := ${s}[${idx}]; ${emitExpr(lam.body[0].value)}`;
+          const inlined = inlineIndexedLambda(lam, s, idx);
+          if (inlined !== null) {
+            core = inlined;
           } else {
             core = `(${args[0]})(${s}[${idx}])`;
           }
@@ -386,6 +419,8 @@ function emitExpr(e: Expr): string {
         // filterMap (synthesized in resolve): drop Nones and unwrap to seq<T>.
         if (e.method === "filterSome") { needPreamble("SeqFilterSome"); needPreamble("OptionType"); return `SeqFilterSome(${obj})`; }
         if (e.method === "every") {
+          const indexed = indexedQuantifier(e.obj, e.args[0], obj, "forall", "==>");
+          if (indexed !== null) return indexed;
           if (_dafnyLibrary === "stdlib") return `Std.Collections.Seq.All(${obj}, ${args[0]})`;
           needPreamble("SeqAll");
           return `SeqAll(${obj}, ${args[0]})`;
@@ -420,6 +455,8 @@ function emitExpr(e: Expr): string {
         // predicate (e.g. a function reference).
         if (e.method === "some") {
           const lam = e.args[0];
+          const indexed = indexedQuantifier(e.obj, lam, obj, "exists", "&&");
+          if (indexed !== null) return indexed;
           let p: string, body: string;
           if (lam.kind === "lambda" && lam.body.length === 1 && lam.body[0].kind === "return") {
             const cb = comprehensionBinder(lam, lam.body[0].value, e.obj);

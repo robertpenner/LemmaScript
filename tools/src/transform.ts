@@ -848,6 +848,18 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
           e.args.length === 1 && (e.args[0].ty.kind === "string" || e.args[0].ty.kind === "bool")) {
         throw new Error(`${e.fn.name}() of a ${e.args[0].ty.kind} is not supported`);
       }
+      // Number.isSafeInteger(n) on an integer → |n| <= 2^53 - 1. `number` is an
+      // unbounded integer in the model, so the JS bound must be stated.
+      if (e.fn.kind === "field" && e.fn.obj.kind === "var" && e.fn.obj.name === "Number" &&
+          e.fn.field === "isSafeInteger" && e.args.length === 1 && isIntegral(e.args[0].ty)) {
+        const n = lowerExpr(e.args[0], binds);
+        const max = 9007199254740991;
+        return {
+          kind: "binop", op: "∧",
+          left: { kind: "binop", op: "≤", left: { kind: "num", value: -max }, right: n },
+          right: { kind: "binop", op: "≤", left: n, right: { kind: "num", value: max } },
+        };
+      }
       // Math.abs/min/max → preamble functions
       if (e.fn.kind === "field" && e.fn.obj.kind === "var" && e.fn.obj.name === "Math") {
         if (e.fn.field === "abs" && e.args.length === 1)

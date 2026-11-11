@@ -80,6 +80,17 @@ test("a field declared with ? is optional until a someMatch binds that path", ()
   assert.deepEqual(details(check([{ name: "b", ty: BOX }], [match(scrutinee, "_b_v_val", INT, [ret(bin("+", read, num(1)))])])), []);
 });
 
+test("a field declared with ? and stamped unknown is optional until a someMatch binds that path", () => {
+  // `if (a.inner === undefined || a.inner.value === undefined) return -1; return a.inner.value;`
+  // before midspiral/LemmaScript#242: resolve stamps `a.inner.value` unknown and no someMatch binds it.
+  const read = fld(v("b", BOX), "v", { kind: "unknown" });
+  assert.deepEqual(details(check([{ name: "b", ty: BOX }], [ret(read)])), [
+    "unwrapped-optional: b.v -- optional by declaration but typed as unwrapped, with no someMatch binding it",
+  ]);
+  const bound = check([{ name: "b", ty: BOX }], [match(fld(v("b", BOX), "v", opt(INT)), "_b_v_val", INT, [ret(read)])]);
+  assert.deepEqual(details(bound), []);
+});
+
 test("an arithmetic node stamped optional inside the Some arm is flagged", () => {
   // `if (o === undefined || o + 1 > x) …` after narrow: `o` is bound, but `o + 1`
   // keeps the optional type resolve gave it, so transform matches on it again.
@@ -90,6 +101,21 @@ test("an arithmetic node stamped optional inside the Some arm is flagged", () =>
   assert.deepEqual(details(vs), [
     "unwrapped-optional: (o + 1) -- arithmetic result typed as optional; transform will treat the value as an Option",
   ]);
+});
+
+test("a stale optional stamp on arithmetic outside a comparison is not flagged", () => {
+  // `if (a.b === undefined) return -1; return a.b + 1;`: transform emits `a.b + 1`
+  // unchanged and Dafny accepts it, so the stale stamp is harmless here.
+  const stale = bin("+", v("o", opt(INT)), num(1), opt(INT));
+  const vs = check([{ name: "o", ty: opt(INT) }], [match(v("o", opt(INT)), "_o_val", INT, [ret(stale)])]);
+  assert.deepEqual(details(vs), []);
+  // `o === undefined || idn(o + 1) > x`: Dafny accepts the stale sum as an int argument.
+  const call: TExpr = { kind: "call", fn: v("idn", { kind: "unknown" }), args: [stale], ty: INT, callKind: "pure", paramTys: [INT] };
+  const asArg = check([{ name: "o", ty: opt(INT) }], [match(v("o", opt(INT)), "_o_val", INT, [ret(call)])]);
+  assert.deepEqual(details(asArg), []);
+  const nested = bin("*", stale, num(2), opt(INT));
+  const asOperand = check([{ name: "o", ty: opt(INT) }], [match(v("o", opt(INT)), "_o_val", INT, [ret(nested)])]);
+  assert.deepEqual(details(asOperand), []);
 });
 
 test("allowed positions for an optional are not flagged", () => {
@@ -112,6 +138,18 @@ test("a relational comparison between two optionals is flagged", () => {
   const vs = check([{ name: "o", ty: opt(INT) }, { name: "p", ty: opt(INT) }],
     [ret(bin("<", v("o", opt(INT)), v("p", opt(INT)), BOOL))]);
   assert.deepEqual(details(vs), ["unwrapped-optional: (o < p) -- both operands of < are optional"]);
+});
+
+test("an optional argument for a parameter with a non-optional type is flagged", () => {
+  const call = (arg: TExpr, paramTy: Ty): TExpr =>
+    ({ kind: "call", fn: v("idn", { kind: "unknown" }), args: [arg], ty: INT, callKind: "pure", paramTys: [paramTy] });
+  const params = [{ name: "o", ty: opt(INT) }];
+  assert.deepEqual(details(check(params, [ret(call(v("o", opt(INT)), INT))])), [
+    "unwrapped-optional: o -- optional value used as an argument for a parameter of type int",
+  ]);
+  assert.deepEqual(details(check(params, [ret(call(v("o", opt(INT)), opt(INT)))])), []);
+  assert.deepEqual(details(check(params, [ret(call(v("o", opt(INT)), { kind: "user", name: "T" }))])), []);
+  assert.deepEqual(details(check(params, [match(v("o", opt(INT)), "_o_val", INT, [ret(call(v("o", INT), INT))])])), []);
 });
 
 test("a binder equal to a user identifier is flagged", () => {
@@ -169,11 +207,13 @@ test("narrow output for every example and fixture passes both checks", () => {
 });
 
 // Shapes from midspiral/LemmaScript#242 (open at the time of writing): a presence
-// check guarding the rest of an `&&`/`||` chain used as a value. `main` emits the
+// check guarding the rest of an `&&`/`||` chain, including nested-path `||`
+// absence checks that #242 fixes without testing. `main` emits the
 // unwrapped Option and Dafny rejects every function in KNOWN_BUGS. When #242
 // lands, this test fails; delete the fixed names from KNOWN_BUGS.
 const chainSource = `
-export interface Box { v?: number }
+export interface Leaf { value?: number }
+export interface Box { v?: number; inner?: Leaf }
 export function andValue(x: number, o?: number): boolean { return o !== undefined && x < o; }
 export function andNull(x: number, o: number | null): boolean { return o !== null && x < o; }
 export function andLet(x: number, o?: number): boolean { const ok = o !== undefined && o + 1 > x; return ok; }
@@ -185,8 +225,11 @@ export function orTernary(x: number, o?: number): number { return o === undefine
 export function andIfElse(x: number, o?: number): number { if (o !== undefined && o + 1 > x) { return 1; } else { return 0; } }
 export function orCompare(x: number, o?: number): boolean { return o === undefined || x < o; }
 export function guardThenCompare(x: number, o?: number): boolean { if (o === undefined) return false; return x < o; }
+export function nestedOrReturn(b: Box): number { if (b.inner === undefined || b.inner.value === undefined) return -1; return b.inner.value; }
+export function nestedOrCompare(x: number, b: Box): number { if (b.inner === undefined || b.inner.value === undefined || x < b.inner.value) return 1; return 0; }
 `;
-const KNOWN_BUGS = ["andValue", "andNull", "andLet", "andField", "orValue", "notOrValue", "orReturn", "orTernary", "andIfElse"];
+const KNOWN_BUGS = ["andValue", "andNull", "andLet", "andField", "orValue", "notOrValue", "orReturn", "orTernary", "andIfElse",
+  "nestedOrReturn", "nestedOrCompare"];
 
 test("the checks flag the && / || chain shapes fixed by midspiral/LemmaScript#242", () => {
   const project = new Project({ compilerOptions: { strict: true, target: ScriptTarget.ESNext, lib: ["lib.esnext.d.ts"] }, useInMemoryFileSystem: true });

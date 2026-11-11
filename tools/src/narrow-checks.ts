@@ -24,16 +24,19 @@
  * - an access path is optional by declaration but `resolve` stamped it
  *   non-optional (it would be emitted as the raw `Option`), or
  * - an optional value is the receiver of a field or index read, an operand of
- *   arithmetic (`+ - * / % **`, unary `-`), or one of two optional operands of
- *   a relational comparison, or
- * - an arithmetic node is stamped optional. Arithmetic never yields an
- *   optional; the stamp is left over from before narrow bound its operand, and
- *   `transform` lowers a comparison on it as a match on an `Option`.
+ *   arithmetic (`+ - * / % **`, unary `-`), one of two optional operands of
+ *   a relational comparison, or an argument for a parameter whose resolved
+ *   type is a primitive or a collection, or
+ * - an arithmetic node stamped optional is an operand of a comparison
+ *   (`=== !== < <= > >=`). Arithmetic never yields an optional; the stamp is
+ *   left over from before narrow bound its operand, and `transform` lowers the
+ *   comparison as a match on an `Option`. Elsewhere the stale stamp is unused.
  * Allowed positions for an optional value: either side of `===`/`!==` (compared
  * with `undefined`, `null`, or a value; `transform` lowers this when exactly one
  * side is optional), one side of a relational comparison (lowered the same
  * way), the left of `??` and the receiver of `?.`, a `someMatch` scrutinee,
- * boolean positions (truthiness), call arguments, and stored values.
+ * boolean positions (truthiness), arguments for optional, user-typed or
+ * unresolved parameters, and stored values.
  *
  * Binder-collision check. A violation is reported when a `someMatch` binder
  * - equals an identifier in the user's source, or
@@ -73,7 +76,14 @@ interface Ctx {
 
 const ARITH = new Set(["+", "-", "*", "/", "%", "**"]);
 const RELATIONAL = new Set(["<", "<=", ">", ">="]);
+// Operators `transform` lowers as a match when exactly one side is typed optional.
+const COMPARISON = new Set([...RELATIONAL, "===", "!=="]);
 const STALE_ARITH = "arithmetic result typed as optional; transform will treat the value as an Option";
+const isStaleArith = (e: TExpr) =>
+  ((e.kind === "binop" && ARITH.has(e.op)) || (e.kind === "unop" && e.op === "-")) && isOptional(e.ty);
+// Parameter types that cannot accept an optional argument. A user type may be a
+// type parameter instantiated with an optional, so it is not included.
+const CONCRETE_PARAM: ReadonlySet<Ty["kind"]> = new Set(["bool", "nat", "int", "real", "string", "array", "tuple", "map", "set"]);
 
 /** Run both checks over every function, method, and constant of a narrowed
  *  module. `userNames` is the set of identifiers in the user's source. */
@@ -175,6 +185,8 @@ function report(ctx: Ctx, check: NarrowCheck, e: TExpr | string, detail: string)
 }
 
 function requireUnwrapped(e: TExpr, role: string, scope: Scope, ctx: Ctx): void {
+  // Emitted arithmetic is never an Option; a stale stamp matters only under a comparison.
+  if (isStaleArith(e)) return;
   if (isOptional(valueTy(e, scope, ctx))) report(ctx, "unwrapped-optional", e, `optional value used as ${role}`);
 }
 
@@ -212,7 +224,7 @@ function walkExpr(e: TExpr, scope: Scope, ctx: Ctx): void {
   switch (e.kind) {
     case "var": {
       const d = declaredTy(e, scope, ctx);
-      if (isOptional(d) && !isOptional(e.ty) && e.ty.kind !== "unknown") {
+      if (isOptional(d) && !isOptional(e.ty)) {
         report(ctx, "unwrapped-optional", e, "optional by declaration but typed as unwrapped, with no someMatch binding it");
       }
       return;
@@ -223,7 +235,7 @@ function walkExpr(e: TExpr, scope: Scope, ctx: Ctx): void {
       requireUnwrapped(e.obj, "a field receiver", scope, ctx);
       walkExpr(e.obj, scope, ctx);
       const d = declaredTy(e, scope, ctx);
-      if (isOptional(d) && !isOptional(e.ty) && e.ty.kind !== "unknown") {
+      if (isOptional(d) && !isOptional(e.ty)) {
         report(ctx, "unwrapped-optional", e, "optional by declaration but typed as unwrapped, with no someMatch binding it");
       }
       return;
@@ -237,24 +249,26 @@ function walkExpr(e: TExpr, scope: Scope, ctx: Ctx): void {
       if (ARITH.has(e.op)) {
         requireUnwrapped(e.left, `an operand of ${e.op}`, scope, ctx);
         requireUnwrapped(e.right, `an operand of ${e.op}`, scope, ctx);
-        if (isOptional(e.ty)) report(ctx, "unwrapped-optional", e, STALE_ARITH);
-      } else if (RELATIONAL.has(e.op) &&
-          isOptional(valueTy(e.left, scope, ctx)) && isOptional(valueTy(e.right, scope, ctx))) {
-        report(ctx, "unwrapped-optional", e, `both operands of ${e.op} are optional`);
+      } else if (COMPARISON.has(e.op)) {
+        for (const side of [e.left, e.right]) if (isStaleArith(side)) report(ctx, "unwrapped-optional", side, STALE_ARITH);
+        if (RELATIONAL.has(e.op) && isOptional(valueTy(e.left, scope, ctx)) && isOptional(valueTy(e.right, scope, ctx))) {
+          report(ctx, "unwrapped-optional", e, `both operands of ${e.op} are optional`);
+        }
       }
       walkExpr(e.left, scope, ctx);
       walkExpr(e.right, scope, ctx);
       return;
     case "unop":
-      if (e.op === "-") {
-        requireUnwrapped(e.expr, "an operand of unary -", scope, ctx);
-        if (isOptional(e.ty)) report(ctx, "unwrapped-optional", e, STALE_ARITH);
-      }
+      if (e.op === "-") requireUnwrapped(e.expr, "an operand of unary -", scope, ctx);
       walkExpr(e.expr, scope, ctx);
       return;
     case "call":
       walkExpr(e.fn, scope, ctx);
-      for (const a of e.args) walkExpr(a, scope, ctx);
+      e.args.forEach((a, i) => {
+        const p = e.paramTys?.[i];
+        if (p && CONCRETE_PARAM.has(p.kind)) requireUnwrapped(a, `an argument for a parameter of type ${p.kind}`, scope, ctx);
+        walkExpr(a, scope, ctx);
+      });
       return;
     case "record":
       if (e.spread) walkExpr(e.spread, scope, ctx);

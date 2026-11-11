@@ -123,6 +123,39 @@ jobs:
             exit 1
           fi
 
+  # LemmaScript run on its own compiler modules, listed in the root
+  # LemmaScript-files.txt. Fails on a broken proof or a stale .dfy.gen.
+  self-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install tools dependencies
+        working-directory: tools
+        run: npm ci
+
+      - uses: ./.github/actions/setup-dafny
+
+      - name: Check self-run modules
+        run: npx tsx tools/src/lsc.ts check --backend=dafny
+
+      - name: Check self-run generated files are up to date
+        run: |
+          git diff --exit-code -- 'tools/src/*.dfy.gen' 'tools/src/*.dfy'
+          untracked=$(git ls-files --others --exclude-standard -- 'tools/src/*.dfy.gen' 'tools/src/*.dfy')
+          if [ -n "$untracked" ]; then
+            echo "ERROR: Untracked self-run Dafny files:"
+            echo "$untracked"
+            exit 1
+          fi
+
   case-studies-dafny:
     runs-on: ubuntu-latest
     strategy:

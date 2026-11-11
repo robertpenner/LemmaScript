@@ -35,6 +35,12 @@ export function isBigInt(ty: Ty): boolean {
   return (ty.kind === "int" || ty.kind === "nat") && !!ty.big;
 }
 
+function stringsEqual(as: string[], bs: string[]): boolean {
+  if (as.length !== bs.length) return false;
+  if (as.length === 0) return true;
+  return as[0] === bs[0] && stringsEqual(as.slice(1), bs.slice(1));
+}
+
 /** Structural equality on Ty. Used to decide whether a tuple type is homogeneous
  *  (all elements equal ⇒ lower to `seq`) vs heterogeneous (⇒ keep as `tuple`). */
 export function tyEqual(a: Ty, b: Ty): boolean {
@@ -59,12 +65,58 @@ export function tyEqual(a: Ty, b: Ty): boolean {
         && tyEqual(a.result, bf.result);
     }
     case "string": {
-      const bs = b as typeof a;
-      return JSON.stringify(a.values ?? null) === JSON.stringify(bs.values ?? null);
+      const av = a.values;
+      const bv = (b as typeof a).values;
+      if (av === undefined) return bv === undefined;
+      if (bv === undefined) return false;
+      return stringsEqual(av, bv);
     }
     case "int": case "nat": return !!a.big === !!(b as typeof a).big;
     case "bool": case "real": case "void": case "unknown": return true;   // no payload
   }
+}
+
+// `tyEqual` is an equivalence relation (DESIGN_LS_IN_LS.md §8.4). Stated as
+// functions so the claims read in TypeScript; when lsc translates this module
+// (LemmaScript-files.txt), each `ensures` becomes a Dafny lemma whose
+// inductive proof is a hand addition in typedir.dfy.
+
+/** Lemma: `tyEqual` is reflexive. */
+export function tyEqualRefl(a: Ty): boolean {
+  //@ ensures \result === true
+  return tyEqual(a, a);
+}
+
+/** Lemma: `tyEqual` is symmetric. */
+export function tyEqualSym(a: Ty, b: Ty): boolean {
+  //@ ensures \result === true
+  return tyEqual(a, b) === tyEqual(b, a);
+}
+
+/** Lemma: `tyEqual` is transitive. */
+export function tyEqualTrans(a: Ty, b: Ty, c: Ty): boolean {
+  //@ requires tyEqual(a, b) === true && tyEqual(b, c) === true
+  //@ ensures \result === true
+  return tyEqual(a, c);
+}
+
+/** Lemma: `stringsEqual` is reflexive. */
+export function stringsEqualRefl(ss: string[]): boolean {
+  //@ ensures \result === true
+  return stringsEqual(ss, ss);
+}
+
+/** Lemma: `stringsEqual` is symmetric. */
+export function stringsEqualSym(as: string[], bs: string[]): boolean {
+  //@ ensures \result === true
+  return stringsEqual(as, bs) === stringsEqual(bs, as);
+}
+
+/** Lemma: `stringsEqual` is transitive. */
+export function stringsEqualTrans(as: string[], bs: string[], cs: string[]): boolean {
+  //@ requires stringsEqual(as, bs) === true && stringsEqual(bs, cs) === true
+  //@ ensures \result === true
+  return stringsEqual(as, cs);
 }
 
 export type CallKind = "pure" | "method" | "spec-pure" | "unknown"

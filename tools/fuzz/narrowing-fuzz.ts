@@ -21,8 +21,11 @@
  * Defaults: seed 1, 150 runs per round, stop after 12 classes or 9 minutes.
  * `--positions` limits the statement forms generated (names in POSITIONS),
  * for example to search past a known bug in `&&`/`||` chains used as values.
- * A replay with `--path` needs the same `--positions` as the original run.
- * Needs `dafny` on PATH. Exits 1 when it reports a failure.
+ * The replay command printed for each class includes any `--positions` used.
+ * `--minutes` is checked between fast-check runs, so one slow `dafny resolve`
+ * call can overrun it.
+ * Needs `dafny` on PATH. Exits 1 when it reports an oracle failure or a
+ * generator bug; rejection classes are listed but do not change the exit code.
  */
 
 import { spawnSync } from "node:child_process";
@@ -157,11 +160,12 @@ const workDir = mkdtempSync(path.join(tmpdir(), "lsc-narrowing-fuzz-"));
 const cache = new Map<string, Outcome>();
 const counts = { modules: 0, dafnyCalls: 0 };
 
-/** Removes generated names, binders and line/column numbers so one bug gives one signature. */
+/** Removes generated names, binders and line/column numbers so one bug gives one signature.
+ *  The parameter `a` is matched only before `.`, so the English article survives. */
 function normalize(message: string): string {
   return message
     .replace(/\b_[A-Za-z0-9_]*\b/g, "_")
-    .replace(/\b(f\d+|o|p|n|a_b|a|box|x)\b/g, "v")
+    .replace(/\b(f\d+|o|p|n|a_b|box|x)\b|\ba(?=\.)/g, "v")
     .replace(/\d+/g, "N")
     .trim();
 }
@@ -200,7 +204,7 @@ function evaluate(text: string): Outcome {
   const userNames = new Set(source.getDescendantsOfKind(SyntaxKind.Identifier).map(i => i.getText()));
   const violations = checkNarrowedModule(narrowed, userNames);
   if (violations.length > 0) {
-    return { ok: false, oracle: "checks", signature: `checks: ${violations[0].check}: ${violations[0].detail}`,
+    return { ok: false, oracle: "checks", signature: `checks: ${violations[0].check}: ${normalize(violations[0].detail)}`,
       detail: violations.map(v => `${v.fn} [${v.check}] ${v.expr} -- ${v.detail}`).join("\n"), dfy };
   }
   const errors = dafnyResolve(dfy);
@@ -267,7 +271,11 @@ function main(): number {
   }
   const arb = moduleArb(positions);
   if (args.path) {
-    const result = fc.check(fc.property(arb, fns => run(renderModule(fns)).ok), { seed, path: args.path, numRuns });
+    // `endOnFailure` stops at the module the path names. Without it, fast-check
+    // would keep shrinking under this weaker property and could reach a class
+    // that an earlier round had already reported.
+    const result = fc.check(fc.property(arb, fns => run(renderModule(fns)).ok),
+      { seed, path: args.path, numRuns, endOnFailure: true });
     if (!result.failed || !result.counterexample) {
       console.log("replay passed");
       return 0;
@@ -282,7 +290,9 @@ function main(): number {
   const started = Date.now();
   const deadline = started + Number(args.minutes) * 60_000;
   const seen = new Set<string>();
+  let rejections = 0;
   let stop = "class limit reached";
+  const positionsArg = args.positions === POSITIONS.join(",") ? "" : ` --positions ${args.positions}`;
 
   for (let round = 0; seen.size < Number(args.classes); round++) {
     const remaining = deadline - Date.now();
@@ -300,17 +310,20 @@ function main(): number {
     const outcome = run(text);
     if (outcome.ok) continue;
     seen.add(outcome.signature);
+    // A rejection may be correct subset behaviour, so it is reported apart from oracle failures.
+    const rejection = outcome.oracle === "rejected";
+    if (rejection) rejections++;
     const n = seen.size;
     writeFileSync(path.join(out, `${n}.ts`), text);
     if (outcome.dfy !== undefined) writeFileSync(path.join(out, `${n}.dfy`), outcome.dfy);
-    console.log(`── class ${n}: replay with --seed ${roundSeed} --path ${result.counterexamplePath} ──\n${text}\n${describe(outcome)}\n`);
+    console.log(`── class ${n}${rejection ? " (rejection)" : ""}: replay with --seed ${roundSeed}${positionsArg} --path ${result.counterexamplePath} ──\n${text}\n${describe(outcome)}\n`);
   }
 
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
-  console.log(`${seen.size} failure classes; stopped: ${stop}`);
+  console.log(`${seen.size - rejections} failure classes, ${rejections} rejection classes; stopped: ${stop}`);
   console.log(`${counts.modules} distinct modules compiled, ${counts.dafnyCalls} dafny calls, ${seconds}s`);
   console.log(`counterexamples saved to ${out}`);
-  return seen.size === 0 ? 0 : 1;
+  return seen.size - rejections === 0 ? 0 : 1;
 }
 
 try {

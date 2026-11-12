@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import ts from 'typescript';
 import { Project, ScriptTarget } from 'ts-morph';
 import { extractModule } from '../tools/src/extract.ts';
@@ -104,6 +105,35 @@ sources.push({
     return 0;
   }`,
 });
+const positiveSources: { name: string; text: string }[] = [];
+positiveSources.push({
+  name: 'blocks',
+  text: `export function blocks(m: Map<string, number>): number {
+    let total = 0;
+    { const x = m.get("a"); if (x !== undefined) { total += x; } else { total += 0; } }
+    { const x = m.get("b"); if (x !== undefined) { total += x; } else { total += 0; } }
+    return total;
+  }`,
+});
+positiveSources.push({
+  name: 'fallthrough',
+  text: `export function fallthrough(m: Map<string, number>, k: string): number {
+    let total = 0;
+    switch (k) {
+      case "a": {
+        const x = m.get("a");
+        if (x !== undefined) { total += x; } else { total += 0; }
+      }
+      case "b": {
+        const x = m.get("b");
+        if (x !== undefined) { total += x; } else { total += 0; }
+        break;
+      }
+      default: { total += 0; break; }
+    }
+    return total;
+  }`,
+});
 
 const project = new Project({
   compilerOptions: {
@@ -118,13 +148,31 @@ const file = project.createSourceFile(
   'pair-scan-experiment.ts',
   sources.map(s => s.text).join('\n'),
 );
+const positiveFile = project.createSourceFile(
+  'pair-scan-positive.ts',
+  positiveSources.map(s => s.text).join('\n'),
+);
 assert.deepEqual(
   project.getPreEmitDiagnostics().map(d => d.getMessageText()),
   [],
 );
 const typed = narrowModule(resolveModule(extractModule(file)));
+const positiveTyped = narrowModule(resolveModule(extractModule(positiveFile)));
+function affectedBody(mod: Module, name: string): Stmt[] {
+  const method = mod.decls.find(d => d.kind === 'method' && d.name === name);
+  assert(method?.kind === 'method');
+  if (name === 'blocks') return method.body.slice(1, -1);
+  const match = method.body[1];
+  assert(match?.kind === 'match');
+  const arm = match.arms[0];
+  assert.deepEqual(arm?.pattern, { kind: 'literal', value: 'a' });
+  return arm.body;
+}
+
 let backendComparisons = 0;
 let backendsExercisingPairMerges = 0;
+let negativeSourceDifferences = 0;
+let supportedPositiveDifferences = 0;
 for (const [backend, transform] of [
   ['dafny', transformModuleDafny],
   ['lean', transformModuleLean],
@@ -138,18 +186,60 @@ for (const [backend, transform] of [
   );
   backendsExercisingPairMerges++;
   const second = once(first, backend);
+  negativeSourceDifferences += first.decls.filter(
+    (decl, i) => !isDeepStrictEqual(decl, second.decls[i]),
+  ).length;
   assert.deepEqual(second, first, `${backend}: second complete invocation`);
   assert.deepEqual(
     fixpoint(input, backend),
     first,
     `${backend}: repeated scan`,
   );
+  const mutableControl = input.decls.find(
+    d => d.kind === 'method' && d.name === 'case_2_let_false_false',
+  );
+  assert(mutableControl?.kind === 'method');
+  assert.deepEqual(
+    mutableControl.body.flatMap(
+      s => s.kind === 'let' && s.name.startsWith('x') ? [s.mutable] : [],
+    ),
+    [true, true],
+    `${backend}: unassigned let remains a mutable negative control`,
+  );
+
+  const positiveInput = transform(positiveTyped).defFile;
+  const positiveFirst = once(positiveInput, backend);
+  const positiveSecond = once(positiveFirst, backend);
+  assert.deepEqual(fixpoint(positiveInput, backend), positiveSecond);
+  assert.deepEqual(once(positiveSecond, backend), positiveSecond);
+  for (const { name } of positiveSources) {
+    const before = affectedBody(positiveInput, name);
+    const afterOne = affectedBody(positiveFirst, name);
+    const afterTwo = affectedBody(positiveSecond, name);
+    const differs = !isDeepStrictEqual(afterOne, afterTwo);
+    supportedPositiveDifferences += Number(differs);
+    assert(differs, `${backend}: ${name} needs a second scan`);
+    assert.deepEqual(before.map(s => s.kind), ['let', 'match', 'let', 'match']);
+    assert.deepEqual(afterOne.map(s => s.kind), ['let', 'match', 'if']);
+    assert.deepEqual(afterTwo.map(s => s.kind), ['if', 'if']);
+    for (const [i, key] of ['a', 'b'].entries()) {
+      const stmt = afterTwo[i];
+      assert(stmt?.kind === 'if' && stmt.cond.kind === 'methodCall');
+      assert.equal(stmt.cond.method, 'has');
+      assert.deepEqual(stmt.cond.obj, { kind: 'var', name: 'm' });
+      assert.deepEqual(stmt.cond.args, [{ kind: 'str', value: key }]);
+    }
+    assert.deepEqual(afterTwo[1], afterOne[2]);
+  }
   backendComparisons++;
   if (process.env.PAIR_SCAN_EVIDENCE_DIR) {
     for (const [stage, value] of [
       ['input', input],
       ['first', first],
       ['second', second],
+      ['positive-input', positiveInput],
+      ['positive-first', positiveFirst],
+      ['positive-second', positiveSecond],
     ] as const)
       writeFileSync(
         resolve(process.env.PAIR_SCAN_EVIDENCE_DIR, `${backend}-${stage}.json`),
@@ -223,10 +313,12 @@ for (const backend of ['dafny', 'lean'] as const) {
 console.log(
   JSON.stringify({
     baseline: '36eb31d',
-    sourceFunctions: sources.length,
+    negativeSourceFunctions: sources.length,
+    positiveSourceFunctions: positiveSources.length,
     backendComparisons,
     backendsExercisingPairMerges,
-    sourceDifferences: 0,
+    negativeSourceDifferences,
+    supportedPositiveDifferences,
     syntheticDuplicateNameDifferences: syntheticDifferences,
   }),
 );

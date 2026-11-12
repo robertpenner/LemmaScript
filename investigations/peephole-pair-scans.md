@@ -4,11 +4,17 @@ Investigation for [robertpenner/LemmaScript#8](https://github.com/robertpenner/L
 
 ## Recommendation
 
-Retain the current scan. The bounded supported-source experiment found no
-first/second-invocation difference and no difference from repeated scanning on
-either backend. A synthetic duplicate-binding example does change, but does not
-establish a current source-generation defect. No production scanning algorithm
-changes in this investigation.
+The owner should decide whether to adopt a bounded normalization change for
+the supported bare-block and switch fall-through cases below. Both produce
+different output on a second invocation on both backend transforms. Repeated
+scanning reaches that second output, and a third invocation makes no change.
+The original 34-function corpus still has no differences.
+
+The observed defect is incomplete simplification: the earlier map lookup
+retains a temporary option and match after one invocation. Both source
+reproducers verify with the current Dafny backend. This is not a demonstrated
+semantic-preservation failure. Production statement scanning remains unchanged;
+issue #8 does not authorize an algorithm change.
 
 ## Revisions and rule
 
@@ -63,12 +69,113 @@ Consequently this mechanism needs the later temporary to have the same textual
 name as the earlier one. This describes this pair rule; it is not a formal
 idempotence theorem for the whole optimizer.
 
-Two same-scope `const x` declarations are invalid TypeScript. Source shadowing
-inside an `if` is valid and was tested separately: child lists are optimized
-before the enclosing list's suffix check, so that case did not require a second
-outer scan. No supported same-list duplicate-binding producer was found in the
-tested lowering paths. This investigation does not prove that none exists in
-every supported source construct.
+### Supported-source differences
+
+Separate bare blocks can legally declare the same `const` name. The extractor
+flattens their statements into one list without renaming the declarations:
+
+```ts
+export function blocks(m: Map<string, number>): number {
+  let total = 0;
+  {
+    const x = m.get("a");
+    if (x !== undefined) {
+      total += x;
+    } else {
+      total += 0;
+    }
+  }
+  {
+    const x = m.get("b");
+    if (x !== undefined) {
+      total += x;
+    } else {
+      total += 0;
+    }
+  }
+  return total;
+}
+```
+
+The following readable rendering shows the complete generated method body at
+each stage. `let` is immutable; `mutable let` records the IR's mutable flag.
+The affected statement IR is identical on the Dafny and Lean transforms.
+These are IR renderings, not backend source syntax.
+
+Input, before the optimizer:
+
+```text
+mutable let total: int = 0
+let x: optional<int> = m.get("a")
+match x {
+  some(_x_val): total := total + _x_val
+  none: total := total + 0
+}
+let x: optional<int> = m.get("b")
+match x {
+  some(_x_val): total := total + _x_val
+  none: total := total + 0
+}
+return total
+```
+
+First complete optimizer invocation:
+
+```text
+mutable let total: int = 0
+let x: optional<int> = m.get("a")
+match x {
+  some(_x_val): total := total + _x_val
+  none: total := total + 0
+}
+if m.has("b") {
+  let _x_val: int = m["b"]
+  total := total + _x_val
+} else {
+  total := total + 0
+}
+return total
+```
+
+Second complete invocation, also the repeated-scan result:
+
+```text
+mutable let total: int = 0
+if m.has("a") {
+  let _x_val: int = m["a"]
+  total := total + _x_val
+} else {
+  total := total + 0
+}
+if m.has("b") {
+  let _x_val: int = m["b"]
+  total := total + _x_val
+} else {
+  total := total + 0
+}
+return total
+```
+
+Braced switch cases also flatten, and fall-through concatenates successive
+case bodies. The experiment's `fallthrough` function puts the `"a"` lookup in
+`case "a"` and the `"b"` lookup in `case "b"`, with a `break` after the second
+lookup. Its first match arm therefore has the same four input statements,
+three first-output statements, and two second-output statements shown above,
+excluding the enclosing `total` initialization and return. The second arm
+contains only the `"b"` lookup, which merges on the first invocation. An
+explicit default arm adds zero to `total` and breaks. This ensures exhaustive
+generated Dafny matching; the version without a default is rejected by Dafny.
+The complete source is in the executable experiment.
+
+Both positive sources pass strict TypeScript diagnostics and production Dafny
+verification (one verified, zero errors each). Lean evidence here covers its
+transformed IR, not verification of the generated Lean reproducer. These
+results establish the map-get shapes above; they do not establish that arbitrary
+flattened duplicate declarations are accepted by either backend.
+
+Source shadowing inside an `if` remains a negative control: child lists are
+optimized before the enclosing suffix check. Bare-block flattening and switch
+fall-through therefore require separate coverage.
 
 ## Reproducible experiment
 
@@ -82,6 +189,8 @@ node node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck \
 ```
 
 The [experiment](./peephole-pair-scans.ts) loads the pinned optimizer in memory.
+Its `git show` command requires local history containing `36eb31d`; fetch that
+commit first in a shallow checkout.
 It compares that optimizer with an experimental variant that repeats only the
 pair scan while list length decreases. It does not import the branch's other
 optimizer changes or alter production files. A third variant disables pair
@@ -89,41 +198,57 @@ merging to assert that the source corpus actually exercises the pair rule.
 The transient loader type assertion describes that compiled module interface;
 the compiler's ordinary typed source pipeline is used for the inputs.
 
-The source corpus contains 34 functions:
+The negative source corpus contains 34 functions:
 
 - One through four sequential map lookups.
-- `const` and unassigned `let` declarations.
+- `const` declarations and unassigned `let` declarations as mutable controls.
 - A later use of the first option value, present or absent.
 - An enclosing `if`, present or absent.
 - One nested shadowing case.
 - One genuinely reassigned `let` option value.
 
 The Cartesian cases contribute 32 functions; the final two are named controls.
+The 16 Cartesian `let` cases retain `mutable: true` and exercise rejection of
+mutable bindings, not immutable-pair live-name behavior. The script asserts
+this flag on the two bindings in `case_2_let_false_false` on both transforms.
+The 16 `const` cases exercise immutable bindings.
+
 All source passes strict TypeScript diagnostics and
 `extractModule` / `resolveModule` / `narrowModule`, then each backend's
 transform. On both backend IRs, first invocation equals second invocation,
 and first invocation equals the repeated-scan variant. Disabling pairs changes
 the result on both backends, confirming that the comparison exercised merging.
-The ordinary const/let/live/nested cases cover the suffix-use and binder
-conditions; they do not claim every such guard fired in every generated method.
+The ordinary const/live/nested cases cover suffix-use and binder conditions;
+they do not claim every guard fired in every method.
+
+The separate positive module contains the bare-block and exhaustive switch
+sources. For each on each backend, assertions require the affected list to
+change from `let, match, let, match` to `let, match, if` and then to `if, if`.
+Both final conditions must be `m.has` with the respective original keys, and
+the already-merged second lookup must stay unchanged. Full-module assertions
+require the repeated-scan output to equal the second complete invocation and
+the third invocation to equal the second. The difference counts are computed.
 
 Observed output:
 
 ```json
 {
   "baseline": "36eb31d",
-  "sourceFunctions": 34,
+  "negativeSourceFunctions": 34,
+  "positiveSourceFunctions": 2,
   "backendComparisons": 2,
   "backendsExercisingPairMerges": 2,
-  "sourceDifferences": 0,
+  "negativeSourceDifferences": 0,
+  "supportedPositiveDifferences": 4,
   "syntheticDuplicateNameDifferences": 2
 }
 ```
 
 Set `PAIR_SCAN_EVIDENCE_DIR` to an existing absolute directory to retain the
 generated input IR, first output, and second output as JSON for each backend.
-The current script asserts deep equality of those full modules, not merely
-statement counts. The synthetic comparisons are separate from that corpus.
+Files named `<backend>-<stage>.json` contain the negative corpus; files named
+`<backend>-positive-<stage>.json` contain the positive corpus. The synthetic
+comparisons remain separate.
 
 ## Limits and conditional implementation costs
 
@@ -134,12 +259,13 @@ It also does not audit every possible interaction with another rewrite.
 Pinning `36eb31d` isolates #9's traversal omission; the experiment does not
 attribute a constructor/map child change to statement scanning.
 
-If a future supported-source example produces the duplicate-name mechanism
-or another disappearing live reference, first record its complete lowering and
-name scopes. That is the specifically unresolved question that could reverse
-this recommendation.
+The supported positive cases meet the original report's condition for
+reconsidering its recommendation. The initial inference from invalid
+same-scope duplicate TypeScript declarations overlooked separate source blocks
+that extraction flattens. The original retain-the-scan recommendation is
+superseded by this evidence.
 
-If repetition becomes warranted, list length is a stopping measure: each
+If the owner approves repetition, list length is a stopping measure: each
 successful pass performs at least one two-to-one merge, and a list of length
 `n` can undergo at most `n - 1` such merges overall. This does not justify
 copying the branch's recursive implementation. Its repeated `slice` and spread
@@ -149,6 +275,16 @@ repeat that work. An iterative repeated loop would avoid recursion between
 passes, but would still add scanning and suffix-copying work. No benchmark or
 stack-limit measurement was run, so no performance improvement is claimed.
 
-The owner may retain the existing scan on this evidence. A new implementation
-ticket requires a supported reproducer or a separately approved stronger
-normalization contract for arbitrary public IR.
+The expected output change is that the earlier lookup also becomes
+`if m.has("a")`, removing its temporary option and match in one invocation.
+A follow-up should retain the two positive sources on both backends as focused
+regressions, along with mutable, distinct-name, live-use, and nested-shadowing
+negative controls. It should verify generated backend output as well as IR.
+
+Repeated scanning is one possible change. A suffix-use check that accounts for
+rebinding could allow the earlier pair to merge on the first scan, but must
+still count references in a later binding's initializer. Preserving lexical
+blocks or renaming their variables would change extraction more broadly.
+This investigation does not choose or benchmark those alternatives. A new
+implementation ticket and owner approval are required before changing the
+scan or name handling.

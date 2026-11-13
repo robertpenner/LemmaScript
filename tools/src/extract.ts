@@ -6,7 +6,7 @@
  */
 
 import path from "path";
-import { Project, Node, FunctionDeclaration, MethodDeclaration, PropertyDeclaration, EnumDeclaration, EnumMember, InterfaceDeclaration, SourceFile, TypeAliasDeclaration, Type, SyntaxKind, Expression, ElementAccessExpression, ScriptTarget, VariableDeclaration, ts } from "ts-morph";
+import { Project, Node, FunctionDeclaration, MethodDeclaration, PropertyDeclaration, EnumDeclaration, EnumMember, InterfaceDeclaration, SourceFile, TypeAliasDeclaration, Type, TypeNode, SyntaxKind, Expression, ScriptTarget, VariableDeclaration, ts } from "ts-morph";
 import type { FieldInfo, TypeDeclInfo, VariantInfo } from "./types.js";
 import { initTypeParser } from "./types.js";
 import type { RawExpr, RawStmt, RawFunction, RawModule, RawClass, RawConst, RawGhostLet, RawGhostAssign } from "./rawir.js";
@@ -558,9 +558,15 @@ function extractExpr(node: Expression): RawExpr {
     const destructureBindings: RawStmt[] = [];
     const params = node.getParameters().map((p, paramIndex) => {
       const typeNode = p.getTypeNode();
-      const tsType = typeNode ? typeNode.getText() : undefined;
+      const tsType = typeNode ? annotationTypeText(typeNode, p.getType()) ?? typeNode.getText() : undefined;
       const nameNode = p.getNameNode();
-      if (Node.isIdentifier(nameNode)) return { name: nameNode.getText(), tsType };
+      if (Node.isIdentifier(nameNode)) return {
+        name: nameNode.getText(), tsType,
+        ...(p.isRestParameter() ? { rest: true as const } : {}),
+        ...(p.getInitializer() ? { defaultValue: extractExpr(p.getInitializer()!),
+          inferredTsType: p.getType().getCallSignatures().length
+            ? p.getType().getText(p) : typeToString(p.getType()) } : {}),
+      };
       if (Node.isArrayBindingPattern(nameNode)) {
         throw new Error(`array binding pattern in arrow parameter not yet supported: ${nameNode.getText()}`);
       }
@@ -1199,6 +1205,16 @@ function declaredTypeTextIfBetter(propDecl: Node | undefined, tsType: string): s
   return text;
 }
 
+/** The type an annotation names, as text for `parseTsType`. That parser has
+ *  no checker, so an indexed access type (`T["k"]`, `T["k"][number]`) would
+ *  survive as an opaque name spelled with brackets. When the annotation uses
+ *  one, render the checker's resolved type instead. */
+function annotationTypeText(tn: TypeNode, type: Type): string | undefined {
+  const indexed = Node.isIndexedAccessTypeNode(tn)
+    || tn.getFirstDescendantByKind(SyntaxKind.IndexedAccessType) !== undefined;
+  return indexed ? typeToString(type) : undefined;
+}
+
 function typeToString(type: Type): string {
   if (constEnumInfo(type)) return "number";
   if (type.isUndefined()) return "undefined";
@@ -1420,7 +1436,8 @@ function renameRawExpr(e: RawExpr, from: string, to: string): RawExpr {
     case "optChain": return { ...e, obj: r(e.obj), chain: e.chain.map(c =>
       c.kind === "call" ? { ...c, args: c.args.map(r) } : c.kind === "index" ? { ...c, idx: r(c.idx) } : c) };
     case "lambda": return e.params.some(p => p.name === from) ? e
-      : { ...e, body: Array.isArray(e.body) ? renameRawStmts(e.body, from, to) : r(e.body) };
+      : { ...e, params: e.params.map(p => p.defaultValue ? { ...p, defaultValue: r(p.defaultValue) } : p),
+          body: Array.isArray(e.body) ? renameRawStmts(e.body, from, to) : r(e.body) };
     case "forall": case "exists": return e.var === from ? e : { ...e, body: r(e.body) };
   }
 }
@@ -1700,7 +1717,9 @@ function extractStmts(stmts: Node[]): RawStmt[] {
             // Dafny binding `var x: T := <default>;` typechecks. The empty-
             // collection cases are picked up by dafny-emit's let case, which
             // adds an explicit `: T` annotation for inference.
-            const tsType = _eraseGenerics(d.getTypeNode()?.getText() ?? typeToString(declType));
+            const typeNode = d.getTypeNode();
+            const tsType = _eraseGenerics((typeNode && annotationTypeText(typeNode, declType))
+              ?? typeNode?.getText() ?? typeToString(declType));
             const isOptional = / \| (null|undefined)\b/.test(tsType)
               || /^(null|undefined) \| /.test(tsType)
               || tsType.endsWith(" | undefined") || tsType.endsWith(" | null");
@@ -1725,7 +1744,9 @@ function extractStmts(stmts: Node[]): RawStmt[] {
         // where the imported declaration's shape is opaque to LS): in that
         // case leave null so resolve infers from the initializer's IR type
         // (which sees the declare-type stubs).
-        const annotatedText = d.getTypeNode()?.getText();
+        const annotationNode = d.getTypeNode();
+        const annotatedText = annotationNode
+          ? annotationTypeText(annotationNode, declType) ?? annotationNode.getText() : undefined;
         const inferred = annotatedText ? null : _eraseGenerics(typeToString(declType));
         const tsType: string | null = havocType
           ?? (annotatedText ? _eraseGenerics(annotatedText) : (inferred === "any" ? null : inferred));
@@ -1835,7 +1856,9 @@ function extractStmts(stmts: Node[]): RawStmt[] {
         const fresh = forCounterRename(decl, s);
         const name = fresh ?? decl.getName();
         if (fresh) renames.push([decl.getName(), fresh]);
-        const tsType = decl.getTypeNode()?.getText() ?? typeToString(decl.getType());
+        const typeNode = decl.getTypeNode();
+        const tsType = (typeNode && annotationTypeText(typeNode, decl.getType()))
+          ?? typeNode?.getText() ?? typeToString(decl.getType());
         const initExpr = decl.getInitializer();
         if (!initExpr) throw new Error(`for(...) at line ${line}: missing initializer for ${name}`);
         hoisted.push({
@@ -2172,8 +2195,11 @@ function extractFunctionInner(fn: FunctionDeclaration | MethodDeclaration, paren
       // when no annotation is present, fall back to the computed type
       // (e.g., `eof = false` infers `boolean` from the default value).
       const tn = p.getTypeNode();
+      const resolved = tn && annotationTypeText(tn, p.getType());
       let tsType: string;
-      if (tn && Node.isUnionTypeNode(tn)) {
+      if (resolved) {
+        tsType = _eraseGenerics(resolved);
+      } else if (tn && Node.isUnionTypeNode(tn)) {
         tsType = _eraseGenerics(_tsTypeFromUnionNode(tn));
       } else if (tn) {
         tsType = _eraseGenerics(tn.getText());
@@ -2205,6 +2231,8 @@ function extractFunctionInner(fn: FunctionDeclaration | MethodDeclaration, paren
       // counterpart in the model. Without this, `getText()` yields "x is T"
       // and the type mapper reads the subject name as an opaque type.
       if (node && node.getKind() === SyntaxKind.TypePredicate) return "boolean";
+      const resolved = node && annotationTypeText(node, fn.getReturnType());
+      if (resolved) return _eraseGenerics(resolved);
       if (node && Node.isUnionTypeNode(node)) return _eraseGenerics(_tsTypeFromUnionNode(node));
       if (node) return _eraseGenerics(node.getText());
       const inferred = fn.getReturnType();
@@ -2229,6 +2257,12 @@ export function extractModule(sourceFile: SourceFile, options: LscOptions = DEFA
   validateDependency: (source: SourceFile) => void = () => {}): RawModule {
   _extractOptions = options;
   _validateDependency = validateDependency;
+  // Per-module state: a previous module in the same process (batch mode,
+  // tests) must not leak a havoc key, temp-name counter, or function-local maps.
+  _havocKey = null;
+  _destrCounter = 0;
+  _typeParamMap = new Map();
+  _reservedForCounterNames = new Set();
   // Seed the fresh-name check (names.ts) before anything mints: every
   // Identifier token in the module, a deliberate over-approximation.
   setUserNames(new Set(sourceFile.getDescendantsOfKind(SyntaxKind.Identifier).map(i => i.getText())));
@@ -2737,7 +2771,10 @@ export function extractModule(sourceFile: SourceFile, options: LscOptions = DEFA
       if (e.kind === "nullish") { collectNamesExpr(e.left); collectNamesExpr(e.right); }
       if (e.kind === "nonNull") { collectNamesExpr(e.expr); }
       if (e.kind === "optChain") { collectNamesExpr(e.obj); for (const c of e.chain) { if (c.kind === "call") c.args.forEach(collectNamesExpr); if (c.kind === "index") collectNamesExpr(c.idx); } }
-      if (e.kind === "lambda") { if (Array.isArray(e.body)) collectNames(e.body); else collectNamesExpr(e.body); }
+      if (e.kind === "lambda") {
+        e.params.forEach(p => { if (p.defaultValue) collectNamesExpr(p.defaultValue); });
+        if (Array.isArray(e.body)) collectNames(e.body); else collectNamesExpr(e.body);
+      }
       if (e.kind === "forall" || e.kind === "exists") { collectSpecNames(e.varType); collectNamesExpr(e.body); }
     }
     // Signature types (params + return) get base-name stripping below; body /

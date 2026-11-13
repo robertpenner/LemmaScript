@@ -323,13 +323,14 @@ function emitExpr(e: Expr, parentPrec?: number): string {
       const head = e.type ? `${e.type}.${leanCtorName(e.name)}` : `.${leanCtorName(e.name)}`;
       if (!e.args || e.args.length === 0) return head;
       const args = e.args.map(a =>
-        (a.kind === "binop" || a.kind === "unop" || a.kind === "implies" || a.kind === "app" || a.kind === "methodCall") ? `(${emitExpr(a)})` : emitExpr(a)
+        (a.kind === "binop" || a.kind === "unop" || a.kind === "implies" || a.kind === "app" || a.kind === "methodCall" || a.kind === "if") ? `(${emitExpr(a)})` : emitExpr(a)
       );
       return `${head} ${args.join(" ")}`;
     }
     case "arrayLiteral":
       if (e.elems.length === 0) return `#[]`;
       return `#[${e.elems.map(el => emitExpr(el)).join(", ")}]`;
+    case "arrayRange": return `((Array.range ${emitExpr(e.length)}).map Int.ofNat)`;
     case "tupleLiteral":
       return `(${e.elems.map(el => emitExpr(el)).join(", ")})`;
     case "tupleProj": {
@@ -373,7 +374,7 @@ function emitExpr(e: Expr, parentPrec?: number): string {
     }
 
     case "lambda": {
-      const params = e.params.map(p => p.name).join(" ");
+      const params = e.params.map(p => e.typedParams ? `(${p.name} : ${tyToLean(p.type)})` : p.name).join(" ");
       // Single return statement → expression lambda
       if (e.body.length === 1 && e.body[0].kind === "return") {
         return `(fun ${params} => ${emitExpr(e.body[0].value)})`;
@@ -498,6 +499,8 @@ function emitExpr(e: Expr, parentPrec?: number): string {
       return wrap ? `(${inner}).toNat` : `${inner}.toNat`;
     }
 
+    case "toInt": return `(Int.ofNat ${emitExpr(e.expr)})`;
+
     case "toReal":
       // A real value reached the Lean backend via coercion (e.g. number `/`).
       // Same unsupported-real story as the `real` type case in tyToLean.
@@ -518,7 +521,7 @@ function emitExpr(e: Expr, parentPrec?: number): string {
     }
 
     case "if":
-      return `if ${emitExpr(e.cond)} then ${emitExpr(e.then)} else ${emitExpr(e.else)}`;
+      return `if ${emitCond(e.cond)} then ${emitExpr(e.then)} else ${emitExpr(e.else)}`;
 
     case "match": {
       // Always parenthesize inline matches — Lean parses alternatives greedily,
@@ -532,7 +535,7 @@ function emitExpr(e: Expr, parentPrec?: number): string {
     case "forall": return `∀ ${e.var} : ${tyToLean(e.type)}, ${emitExpr(e.body)}`;
     case "exists": return `∃ ${e.var} : ${tyToLean(e.type)}, ${emitExpr(e.body)}`;
 
-    case "let": return `let ${e.name} := ${emitExpr(e.value)}\n${emitExpr(e.body)}`;
+    case "let": return `let ${e.name}${e.type ? ` : ${tyToLean(e.type)}` : ""} := ${emitExpr(e.value)}\n${emitExpr(e.body)}`;
     default: throw new Error(`Unsupported Lean expression: ${(e as Expr).kind}`);
   }
 }
@@ -559,7 +562,6 @@ function isPropValued(e: Expr): boolean {
 // ── Statement emission ──────────────────────────────────────
 
 function emitStmts(stmts: Stmt[], indent: number): string {
-  const pad = "  ".repeat(indent);
   return stmts.map(s => emitStmt(s, indent)).join("\n");
 }
 
@@ -604,11 +606,11 @@ function emitStmt(s: Stmt, indent: number): string {
     case "continue": return `${pad}continue`;
 
     case "if": {
-      let out = `${pad}if ${emitExpr(s.cond)} then\n${emitStmts(s.then, indent + 1)}`;
+      let out = `${pad}if ${emitCond(s.cond)} then\n${emitStmts(s.then, indent + 1)}`;
       if (s.else.length > 0) {
         if (s.else.length === 1 && s.else[0].kind === "if") {
           const ei = s.else[0];
-          out += `\n${pad}else if ${emitExpr(ei.cond)} then\n${emitStmts(ei.then, indent + 1)}`;
+          out += `\n${pad}else if ${emitCond(ei.cond)} then\n${emitStmts(ei.then, indent + 1)}`;
           if (ei.else.length > 0) out += `\n${pad}else\n${emitStmts(ei.else, indent + 1)}`;
         } else {
           out += `\n${pad}else\n${emitStmts(s.else, indent + 1)}`;
@@ -659,7 +661,7 @@ function emitStmt(s: Stmt, indent: number): string {
 
     case "while": {
       // Guard is computational (Bool); invariants / done_with are Prop.
-      const lines = [`${pad}while ${emitExpr(s.cond)}`];
+      const lines = [`${pad}while ${emitCond(s.cond)}`];
       const prevBoolCtx = _boolCtx;
       _boolCtx = false;
       for (const inv of s.invariants) lines.push(`${pad}  invariant invariant_${++_invariantIndex}: (${emitExpr(inv)} : Prop)`);
@@ -860,12 +862,22 @@ function emitDecl(d: Decl): string {
   }
 }
 
+/** Emit an `if`/`while` condition. A condition is elaborated as a `Prop`, so
+ *  an inline match mixing comparisons with `true`/`false` arms has no
+ *  `Decidable` instance; ascribing `Bool` decides each arm instead. (A match
+ *  whose arms are all literals, like a variant test, needs no ascription.) */
+function emitCond(e: Expr): string {
+  return e.kind === "match" && e.arms.some(a => a.body.kind !== "bool")
+    ? `(${emitExpr(e)} : Bool)`
+    : emitExpr(e);
+}
+
 /** Emit a pure expression with indented if/match blocks. */
 function emitPureExpr(e: Expr, indent: number): string {
   const pad = "  ".repeat(indent);
   switch (e.kind) {
     case "if":
-      return `${pad}if ${emitExpr(e.cond)} then\n${emitPureExpr(e.then, indent + 1)}\n${pad}else\n${emitPureExpr(e.else, indent + 1)}`;
+      return `${pad}if ${emitCond(e.cond)} then\n${emitPureExpr(e.then, indent + 1)}\n${pad}else\n${emitPureExpr(e.else, indent + 1)}`;
     case "match": {
       const lines = [`${pad}match ${emitExpr(e.scrutinee)} with`];
       for (const arm of e.arms) {
@@ -875,7 +887,7 @@ function emitPureExpr(e: Expr, indent: number): string {
       return lines.join("\n");
     }
     case "let":
-      return `${pad}let ${e.name} := ${emitExpr(e.value)}\n${emitPureExpr(e.body, indent)}`;
+      return `${pad}let ${e.name}${e.type ? ` : ${tyToLean(e.type)}` : ""} := ${emitExpr(e.value)}\n${emitPureExpr(e.body, indent)}`;
     default:
       return `${pad}${emitExpr(e)}`;
   }

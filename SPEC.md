@@ -1,6 +1,6 @@
 # LemmaScript — Implementation Specification
 
-**Version:** 0.6.8
+**Version:** 0.6.9
 **Date:** November 2026
 
 Backend-specific details:
@@ -218,7 +218,7 @@ A file-level directive that restricts the file to a specific backend:
 
 When `lsc` runs with a different backend (e.g., `--backend=lean`), the file is silently skipped. This is used for features only supported in one backend, such as class methods (Dafny only).
 
-The `safe-slice` option selects JS-clamping semantics for two-arg `arr.slice(lo, hi)`: the emitted Dafny goes through a `SafeSlice` helper that clamps both bounds to `[0, |s|]` rather than producing a direct `s[lo..hi]` (which Dafny requires `0 <= lo <= hi <= |s|`). It is off by default and can be enabled project-wide in `lemmascript.json` or per file with `//@ option safe-slice true`. The older top-of-file `//@ safe-slice` spelling remains an alias. A file can override a project default with `//@ option safe-slice false` when its bounds are proved.
+The `safe-slice` option selects JS-clamping semantics for `arr.slice(lo, hi)` and `arr.slice(lo)`: the emitted Dafny goes through a `SafeSlice` helper that clamps both bounds to `[0, |s|]` rather than producing a direct `s[lo..hi]` (which Dafny requires `0 <= lo <= hi <= |s|`). The one-argument form passes `|s|` as `hi`. It is off by default and can be enabled project-wide in `lemmascript.json` or per file with `//@ option safe-slice true`. The older top-of-file `//@ safe-slice` spelling remains an alias. A file can override a project default with `//@ option safe-slice false` when its bounds are proved.
 
 ### 2.8 Classes
 
@@ -475,13 +475,18 @@ With `local`, `SeqFilter` and `SeqAll` replace the corresponding
 | `Math.ceil(x)` (real arg) | — | `CeilReal(x)` → `x.Floor + 1` if non-integer |
 | `Math.floor(n)` (int arg) | identity | identity |
 | `Math.ceil(n)` (int arg) | identity | identity |
-| `Math.abs(x)` | `MathAbs(x)` | `MathAbs(x)` (preamble: `if x >= 0 then x else -x`) |
-| `Math.min(a, b)` | `MathMin(a, b)` | `MathMin(a, b)` (preamble: `if a <= b then a else b`) |
-| `Math.max(a, b)` | `MathMax(a, b)` | `MathMax(a, b)` (preamble: `if a >= b then a else b`) |
+| `Math.abs(x)` (int arg) | `MathAbs(x)` | `MathAbs(x)` (preamble: `if x >= 0 then x else -x`) |
+| `Math.min(a, b)` (int args) | `MathMin(a, b)` | `MathMin(a, b)` (preamble: `if a <= b then a else b`) |
+| `Math.max(a, b)` (int args) | `MathMax(a, b)` | `MathMax(a, b)` (preamble: `if a >= b then a else b`) |
+| `Math.abs(x)` (real arg) | — | `MathAbsReal(x)` → `real` |
+| `Math.min(a, b)` / `Math.max(a, b)` (either arg real) | — | `MathMinReal(a, b)` / `MathMaxReal(a, b)` → `real`; int/nat operands coerced with `as real` |
+| `Number.isSafeInteger(n)` (integer arg) | `-9007199254740991 ≤ n ∧ n ≤ 9007199254740991` | `-9007199254740991 <= n && n <= 9007199254740991`; `false` for a bigint argument; real arguments are rejected |
 | `c ? a : b` | `if c then a else b` | `if c then a else b` |
 | `opt ? f(opt) : undefined` | match on Some/None | `match opt { case Some(v) => Some(f(v)) case None => None }` |
 | `s.indexOf(sub)` | `JSString.indexOf s sub` | `StringIndexOf(s, sub)` |
 | `s.indexOf(sub, from)` | — (rejected) | `StringIndexOfFrom(s, sub, StringSearchPosition(s, from))`; position clamps to `[0, \|s\|]` |
+| `s.lastIndexOf(sub)` | — (rejected) | `StringLastIndexOf(s, sub)` (preamble: `-1` or a match, with no match starting later) |
+| `s.lastIndexOf(sub, from)` | — (rejected) | `StringLastIndexOfFrom(s, sub, StringSearchPosition(s, from))`; position clamps to `[0, \|s\|]` |
 | `s.slice(start, end)` | `JSString.slice s start end` | `s[start..end]` |
 | `s.substring(start)` / `s.substring(start, end)` | — | `s[start..]` / `s[start..end]` |
 | `s.charCodeAt(i)` | — | `(s[i] as int)` |
@@ -651,6 +656,13 @@ arr.some((x) => x < 0)   // → Lean: arr.any (fun x => x < 0)
 Lambda bodies can be expressions (`(x) => x + 1`) or statement blocks (`(x) => { ... }`). A block body is flattened to a single expression when its control flow allows — `if`/`let`/`return` shapes and a `switch` (lowered to a `match`-expression); bodies that can't reduce (loops, bare side effects) stay as statements, which the Dafny backend rejects (its lambdas are expression-only). A record literal returned from a callback is typed by the callback's return annotation, so `(x): Out => ({ ... })` constructs `Out(...)`, not an anonymous tuple.
 
 Flat object destructuring in a lambda parameter is supported, including aliases (`({ id, hidden: isHidden }) => ...`). It remains one callback parameter and lowers to immutable field bindings inside the lambda. Array patterns, nested object patterns, defaults, and rest properties are rejected during extraction with an explicit unsupported-pattern error.
+
+**Callback arguments.** Inline array callbacks receive JavaScript's actual arguments: `(element, index, array)` for `map`, `filter`, `some`, `every`, and the `find` family; `(acc, element, index, array)` for `reduce` with an initial value; `(a, b)` for sort comparators. Unused trailing parameters cost nothing; only callbacks that read the index or array are lowered to iterate over positions (Dafny's `CallbackIndices`, [SPEC_DAFNY.md §4](SPEC_DAFNY.md#4-helper-preambles)). A rest parameter is symbolic: `rest.length` and `rest[k]` for constant `k` resolve against the argument list, including inside nested closures, but returning, passing, or mutating the rest array is rejected. A default runs only when JavaScript omits the argument. All parameters are in scope in default initializers, and a literal default closure may capture a later parameter. Rest/default parameters outside these callback positions, and defaults on optional-typed slots (which would need an `undefined` check), are rejected.
+
+```ts
+a.every((x, i) => x <= b[i]);                 // i is the position
+[7].map((value, ...tail) => tail.length);     // 2: the index and the array
+```
 
 **filterMap.** `xs.map(x => ... | undefined).filter((x): x is T => x !== undefined)` drops the `undefined`s *and* unwraps to `seq<T>` — lowered to the proven `SeqFilterSome` preamble (a plain `Map(.value, Filter(.Some?, ...))` wouldn't verify, since `.value` is partial).
 
@@ -981,8 +993,11 @@ function tagNameExists(m: Model, name: string, excludeTag?: TagId): boolean {
 If `transformPureBody` can auto-convert the body to a pure expression, the function emits as a normal Dafny `function`. If it cannot (e.g., the body has loops), it emits as `function by method`:
 
 ```dafny
+function tagNameExists_fun_spec(m: Model, name: string, excludeTag: Option<TagId>): bool
+
 function tagNameExists(m: Model, name: string, excludeTag: Option<TagId>): bool
 {
+  tagNameExists_fun_spec(m, name, excludeTag)
 }
 by method {
   var i_tid_keys := SetToSeq(m.tags.Keys);
@@ -990,21 +1005,18 @@ by method {
 }
 ```
 
-The empty `{ }` block is the spec body placeholder — **Dafny will reject the file as a parse error until it is filled in**. Complete it in the `.dfy` file *before* running verify:
+The functional body delegates to a bodyless `tagNameExists_fun_spec` stub, so the generated file parses and resolves on its own. Give the stub a body in the `.dfy` by adding lines after its signature:
 
 ```dafny
-function tagNameExists(m: Model, name: string, excludeTag: Option<TagId>): bool
+function tagNameExists_fun_spec(m: Model, name: string, excludeTag: Option<TagId>): bool
 {
   exists tid :: tid in m.tags &&
     (match excludeTag { case None => true case Some(v) => v != tid }) &&
     eqIgnoreCase(m.tags[tid].name, name)
 }
-by method {
-  // ... auto-generated, preserved by regen
-}
 ```
 
-The spec body is purely additive — `regen` three-way-merges and preserves user additions while updating the `by method` block when the TypeScript changes.
+Dafny then verifies that the `by method` block computes `tagNameExists_fun_spec`; left bodyless, the stub is uninterpreted and that proof fails. `regen` three-way-merges the `by method` block when the TypeScript changes without touching the added body.
 
 **Effect on callers:** Since `//@ pure` functions are `function`s in Dafny, callers that only invoke pure functions become pure automatically. For example, a large `switch`-based `apply` function becomes a `function` if all the map-iterating helpers it calls are marked `//@ pure`.
 

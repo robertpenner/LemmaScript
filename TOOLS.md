@@ -31,6 +31,7 @@ Lambda parameters keep their `rest` marker and `defaultValue` for resolve to bin
 Raw IR annotated with resolved types and classifications. Produced by a resolve pass that runs once. Still TS-shaped, not backend-shaped.
 
 Each expression carries:
+
 - `ty: Ty` — resolved LemmaScript type (nat, int, bool, array, user, etc.)
 - Calls carry `callKind` (pure, method, spec-pure, unknown)
 - Discriminant fields identified
@@ -49,7 +50,7 @@ Type names: `Expr`, `Stmt`, `Module`, `MatchArm`, `StmtMatchArm`, and `Decl` = `
 
 **Resolve** (`resolve.ts`): Raw IR → Typed IR. Resolves types from ts-morph type info and `//@ type` annotations. Classifies calls. Identifies discriminants. Rejects unsupported patterns. Parses `//@ ` annotations with the specparser. Carries narrowing context (env, `narrowedPaths`) so that the then-branch of `if (e !== undefined)` resolves with `e`'s unwrapped type — TS-faithful: simple vars and pure access paths (`a.b.c`, any depth) narrow. `&&` chains accumulate narrowings (each premise in scope for later ones); `==>` propagates premise narrowings into the conclusion. Narrowing here changes types; structural narrowing remains in `narrow.ts`. Resolve also binds inline callbacks to their actual arguments and simplifies symbolic rest observations; see [Callback binding and lowering](#callback-binding-and-lowering).
 
-**Narrow** (`narrow.ts`): Typed IR → Typed IR. Owns all structural narrowing — both for optional checks and for discriminated unions. Optional patterns rewrite to `someMatch`; discriminant patterns (`x.kind === "v"`, `'k' in x`, `Array.isArray(x)` for synthesized array-unions, `x.kind !== "v") return; ...`) rewrite to `tagMatch`. Also handles `==>` premise narrowing in specs, `left ?? right` (nullish coalescing), `k in m ? m[k] : default` for map-typed `m`, and `obj?.<chain>` for any combination of `?.field`, `?.foo()`, `?.[i]`, and continuations (via the `optChain` IR node). Rules fire for pure access paths (`var(x)`, `field(purePath, name)`); `optChain` and `nullish` are the sole paths for complex scrutinees. The pass owns *where* a condition sits; *what* a condition establishes lives in `condition-facts.ts` (shared with resolve). See [Narrow rules](#narrow-rules) below.
+**Narrow** (`narrow.ts`): Typed IR → Typed IR. Owns all structural narrowing — both for optional checks and for discriminated unions. Optional patterns rewrite to `someMatch`; discriminant patterns (`x.kind === "v"`, `'k' in x`, `Array.isArray(x)` for synthesized array-unions, `x.kind !== "v") return; ...`) rewrite to `tagMatch`. Also handles `==>` premise narrowing in specs, `left ?? right` (nullish coalescing), `k in m ? m[k] : default` for map-typed `m`, and `obj?.<chain>` for any combination of `?.field`, `?.foo()`, `?.[i]`, and continuations (via the `optChain` IR node). Rules fire for pure access paths (`var(x)`, `field(purePath, name)`); `optChain` and `nullish` are the sole paths for complex scrutinees. The pass owns _where_ a condition sits; _what_ a condition establishes lives in `condition-facts.ts` (shared with resolve). See [Narrow rules](#narrow-rules) below.
 
 **Transform** (`transform.ts`): Typed IR → IR. Consumes resolved types and classifications. Pattern-matches on `ty` to decide: constructor vs string, `.toNat` vs direct, `if` vs `match`, pure def vs method. Configured with `TransformOptions` for backend-specific behavior (`backend`, `monadic`). Lowers `someMatch` to IR `match` Some/None — substituting the binder for any pure access path scrutinee, or lowering naively when the scrutinee is complex (narrow pre-bound the someBody). No optional-narrowing logic of its own.
 
@@ -89,12 +90,12 @@ Each emitter dispatches on `(receiverTy, method)` to decide syntax. For example,
 
 ## Callback Binding and Lowering
 
-| Stage | Responsibility |
-|---|---|
-| [Extract](tools/src/extract.ts) | Keep each lambda parameter's rest marker and default initializer in Raw IR. |
-| [Resolve](tools/src/resolve.ts) | `resolveCallback` binds the lambda to JavaScript's argument list (`callbackArgumentTypes` in [builtins](tools/src/builtins.ts)). Env lookups record which slots are read; unused trailing slots are dropped. Rest is a symbolic pack (`.length`, constant index). Defaults resolve with every parameter in scope; a literal default closure is emitted after the parameters it captures, other initializers keep source order. |
-| [Callback lowering](tools/src/callback-lowering.ts), inside transform | `lowerIndexedCallback` rewrites a callback that reads the index or source into an operation over `arrayRange(source.size)`, binding the receiver once. `filter`/`find` map positions back to elements; predicates guard out-of-range indices so backend helpers stay total. Returns `null` when no extra slot is read, leaving unary output unchanged. |
-| Emit | `arrayRange` is Dafny's `CallbackIndices(n)` (except under `map`, which becomes a plain `seq(n, i => ...)` comprehension) or Lean's `(Array.range n).map Int.ofNat`. |
+| Stage                                                                 | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Extract](tools/src/extract.ts)                                       | Keep each lambda parameter's rest marker and default initializer in Raw IR.                                                                                                                                                                                                                                                                                                                                                    |
+| [Resolve](tools/src/resolve.ts)                                       | `resolveCallback` binds the lambda to JavaScript's argument list (`callbackArgumentTypes` in [builtins](tools/src/builtins.ts)). Env lookups record which slots are read; unused trailing slots are dropped. Rest is a symbolic pack (`.length`, constant index). Defaults resolve with every parameter in scope; a literal default closure is emitted after the parameters it captures, other initializers keep source order. |
+| [Callback lowering](tools/src/callback-lowering.ts), inside transform | `lowerIndexedCallback` rewrites a callback that reads the index or source into an operation over `arrayRange(source.size)`, binding the receiver once. `filter`/`find` map positions back to elements; predicates guard out-of-range indices so backend helpers stay total. Returns `null` when no extra slot is read, leaving unary output unchanged.                                                                         |
+| Emit                                                                  | `arrayRange` is Dafny's `CallbackIndices(n)` (except under `map`, which becomes a plain `seq(n, i => ...)` comprehension) or Lean's `(Array.range n).map Int.ofNat`.                                                                                                                                                                                                                                                           |
 
 ```text
 xs.map((value, ...rest) => value + rest[0])
@@ -105,7 +106,7 @@ xs.map((value, ...rest) => value + rest[0])
 
 ## Externs
 
-When a call resolves to a function declared in a *different* `.ts` file, extract records it as a `RawExtern` (resolved to `TExtern`, lowered to `ExternDecl`). The Dafny emitter renders it as a top-of-file `function {:axiom} Name(...): R` by default, or as a body-less `method {:axiom}` when selected by `extern-default: impure` or `//@ impure`; the latter gives every call an independent result. A source `//@ pure` overrides an impure project default. In both cases the source `requires`/`ensures` are lifted along. Externs are emitted before all other declarations so they're in scope everywhere.
+When a call resolves to a function declared in a _different_ `.ts` file, extract records it as a `RawExtern` (resolved to `TExtern`, lowered to `ExternDecl`). The Dafny emitter renders it as a top-of-file `function {:axiom} Name(...): R` by default, or as a body-less `method {:axiom}` when selected by `extern-default: impure` or `//@ impure`; the latter gives every call an independent result. A source `//@ pure` overrides an impure project default. In both cases the source `requires`/`ensures` are lifted along. Externs are emitted before all other declarations so they're in scope everywhere.
 
 ## Spec Expression Parser
 
@@ -124,7 +125,11 @@ The specparser (`specparser.ts`) parses `//@ ` annotation expressions into `RawE
 The resolve pass uses linked environments (Scheme-style). Each binding is a frame with one name, one type, and a pointer to the parent:
 
 ```ts
-interface Env { name: string; ty: Ty; parent: Env | null }
+interface Env {
+  name: string;
+  ty: Ty;
+  parent: Env | null;
+}
 ```
 
 `let` extends the chain. Lookup walks it; extending a scope does not mutate or copy existing frames. `resolveStmt` returns `[TStmt, Env]` so bindings thread through a block. Block-creating constructs (`if`, `while`, `forof`, `switch`) call `resolveBlock`; inner bindings don't leak out. `let x = init` resolves init before adding x to the env. [Callback](#callback-binding-and-lowering) frames add an `onRead` hook, a replacement value, or a symbolic rest pack; shadowing is unchanged.
@@ -206,48 +211,48 @@ Throughout, `e !== undefined` includes equivalent forms: `undefined !== e`, bare
 
 **Statement-level rules — optional narrowing**
 
-| Pattern | Rewrites to |
-|---------|-------------|
-| `if (e !== undefined) S` (some-branch non-empty) | `someMatch e { Some(_e_val) => S, None => {} }` |
-| `if (e === undefined) terminate; rest` (some-branch empty + rest) | `someMatch e { Some(_e_val) => rest, None => terminate }` |
-| `if (e !== undefined && rest) S` (no else) | `someMatch e { Some(_e_val) => if rest S, None => {} }` |
-| `e !== undefined && rest` (bare expression statement — the `if`-less guard idiom) | `someMatch e { Some(_e_val) => rest;, None => {} }` |
-| `if (a === undefined \|\| b === undefined \|\| ...) terminate; rest` | nested `someMatch` for each var, deepest body is rest |
-| `let x = (e_opt && rest) ? a : b` (statement, impure-OK guard) | `var x := b; someMatch e_opt { Some(_v) => { if rest { x := a } } }` |
+| Pattern                                                                           | Rewrites to                                                          |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `if (e !== undefined) S` (some-branch non-empty)                                  | `someMatch e { Some(_e_val) => S, None => {} }`                      |
+| `if (e === undefined) terminate; rest` (some-branch empty + rest)                 | `someMatch e { Some(_e_val) => rest, None => terminate }`            |
+| `if (e !== undefined && rest) S` (no else)                                        | `someMatch e { Some(_e_val) => if rest S, None => {} }`              |
+| `e !== undefined && rest` (bare expression statement — the `if`-less guard idiom) | `someMatch e { Some(_e_val) => rest;, None => {} }`                  |
+| `if (a === undefined \|\| b === undefined \|\| ...) terminate; rest`              | nested `someMatch` for each var, deepest body is rest                |
+| `let x = (e_opt && rest) ? a : b` (statement, impure-OK guard)                    | `var x := b; someMatch e_opt { Some(_v) => { if rest { x := a } } }` |
 
 **Statement-level rules — discriminated-union narrowing** (emit `tagMatch` IR)
 
-| Pattern | Rewrites to |
-|---------|-------------|
-| `if (x.kind === "v1") S1 [else if (x.kind === "v2") S2 ...]` (also `'k' in x` and `Array.isArray(x)` forms) | `tagMatch x { v1 => S1, v2 => S2, ..., _ => fallthrough }` |
-| `if (x.kind !== "v") terminate; rest` (also `!Array.isArray(x)` form) | `tagMatch x { v => rest, _ => terminate }` |
-| `if (<rest> && Array.isArray(path) && <more>) S [else]` | `tagMatch path { ArrayBranch => if (<rest && more>) S [else] }` |
+| Pattern                                                                                                     | Rewrites to                                                     |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `if (x.kind === "v1") S1 [else if (x.kind === "v2") S2 ...]` (also `'k' in x` and `Array.isArray(x)` forms) | `tagMatch x { v1 => S1, v2 => S2, ..., _ => fallthrough }`      |
+| `if (x.kind !== "v") terminate; rest` (also `!Array.isArray(x)` form)                                       | `tagMatch x { v => rest, _ => terminate }`                      |
+| `if (<rest> && Array.isArray(path) && <more>) S [else]`                                                     | `tagMatch path { ArrayBranch => if (<rest && more>) S [else] }` |
 
 For the chain and neg-early-return rules, the `Array.isArray(x)` / `!Array.isArray(x)` discriminant forms require a bare-var scrutinee (the var-name-keyed replacement in transform only handles that shape); path scrutinees like `m.content` go through the expression-form rules below.
 
 **Expression-level rules**
 
-| Pattern | Rewrites to |
-|---------|-------------|
-| `e !== undefined ? a : b` | `someMatch e { Some(_e_val) => a, None => b }` |
-| `e !== undefined && rest ? a : b` (pure rest) | `someMatch e { Some(_e_val) => if rest then a else b, None => b }` |
-| `opt ? a : b` (truthiness; cond is optional-typed) | `someMatch opt { Some(_opt_val) => a, None => b }` |
-| `left ?? right` (nullish coalescing) | `someMatch left { Some(_v) => _v, None => right }` |
-| `path !== undefined [&& rest] ==> B` (spec implication) | `someMatch path { Some(_p_val) => (rest ==> B), None => true }` |
-| `optChain(obj, chain)` (from extract's `obj?.<chain>` — chain may be field/call/index steps) | `someMatch obj { Some(_oc{N}_val) => apply(chain, _oc{N}_val), None => undefined }` |
-| `k in m ? m[k] : default` (`m` map-typed; then-branch is exactly `m[k]`, `default` non-optional) | `someMatch m[k] { Some(_m_k_val) => _m_k_val, None => default }` |
+| Pattern                                                                                          | Rewrites to                                                                         |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `e !== undefined ? a : b`                                                                        | `someMatch e { Some(_e_val) => a, None => b }`                                      |
+| `e !== undefined && rest ? a : b` (pure rest)                                                    | `someMatch e { Some(_e_val) => if rest then a else b, None => b }`                  |
+| `opt ? a : b` (truthiness; cond is optional-typed)                                               | `someMatch opt { Some(_opt_val) => a, None => b }`                                  |
+| `left ?? right` (nullish coalescing)                                                             | `someMatch left { Some(_v) => _v, None => right }`                                  |
+| `path !== undefined [&& rest] ==> B` (spec implication)                                          | `someMatch path { Some(_p_val) => (rest ==> B), None => true }`                     |
+| `optChain(obj, chain)` (from extract's `obj?.<chain>` — chain may be field/call/index steps)     | `someMatch obj { Some(_oc{N}_val) => apply(chain, _oc{N}_val), None => undefined }` |
+| `k in m ? m[k] : default` (`m` map-typed; then-branch is exactly `m[k]`, `default` non-optional) | `someMatch m[k] { Some(_m_k_val) => _m_k_val, None => default }`                    |
 
-The `&&`-ternary rule skips when `rest` contains impure method calls (those would be lifted out of the match arm by transform, breaking binder scope) — the let-cond statement-level rule handles those. Both `&&`-ternary and `==>` rules walk their inner expression recursively so chained checks (`a !== undefined && a.b !== undefined ? ... : ...`, `... ==> ...`) become nested someMatches. The bare-statement `&&` rule (above) has no such restriction: its arm is a statement-level someMatch, which keeps a guarded call in statement position, so transform never ANF-lifts it out. It likewise walks `rest` as a statement, so chained checks nest.
+The `&&`-ternary rule skips when `rest` contains impure method calls (those would be lifted out of the match arm by transform, breaking binder scope) — the let-cond statement-level rule handles those. A pure module function is the exception: transform lowers its body as one expression and never lifts a call, so both rules match there even when `rest` calls a user function (`o !== undefined && f(o) > x`). Both `&&`-ternary and `==>` rules walk their inner expression recursively so chained checks (`a !== undefined && a.b !== undefined ? ... : ...`, `... ==> ...`) become nested someMatches. The bare-statement `&&` rule (above) has no such restriction: its arm is a statement-level someMatch, which keeps a guarded call in statement position, so transform never ANF-lifts it out. It likewise walks `rest` as a statement, so chained checks nest.
 
 The `k in m` map rule mirrors the discriminant-`in` path but is gated on `map`; the existing Dafny `Map.get` peephole then collapses the result back to `if k in m then m[k] else default`.
 
 **Expression-level rules — `Array.isArray` narrowing** (synthesized array-unions, discriminant `"__isArray__"`; emit `tagMatch` IR). The matched arm rewrites bare `x` references to the variant's payload field (e.g. `x.arr`) at transform time; scrutinee may be any narrowable path (var or field chain).
 
-| Pattern | Rewrites to |
-|---------|-------------|
+| Pattern                                                     | Rewrites to                                                                     |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | `Array.isArray(x) ? a : b` (or `!Array.isArray(x) ? a : b`) | `tagMatch x { ArrayBranch => a } fallthrough b` (`NonArrayBranch` when negated) |
-| `(<rest> && Array.isArray(path)) ? a : b` | `tagMatch path { ArrayBranch => (<rest>) ? a : b } fallthrough b` |
-| `Array.isArray(x) ==> B` (or `!Array.isArray(x) ==> B`) | `tagMatch x { ArrayBranch => B, _ => true }` (`NonArrayBranch` when negated) |
+| `(<rest> && Array.isArray(path)) ? a : b`                   | `tagMatch path { ArrayBranch => (<rest>) ? a : b } fallthrough b`               |
+| `Array.isArray(x) ==> B` (or `!Array.isArray(x) ==> B`)     | `tagMatch x { ArrayBranch => B, _ => true }` (`NonArrayBranch` when negated)    |
 
 The `==>` form mirrors `ruleImplOptional`: the unmatched variant becomes a vacuous-`true` fallthrough, since the implication is trivially satisfied when the premise is false.
 
@@ -259,6 +264,8 @@ The `optChain` and `nullish` rules are exceptions: their scrutinee can be any ex
 
 The statement-level discriminant rules require the scrutinee to be a simple var (`x.kind === "v"` requires `x` to be a var; likewise the `Array.isArray(x)` statement forms). Transform's `emitMatchStmt` does the variant destructuring (replaces `x.field` with the variant binder). Discriminator must be the named discriminant field of a user `discriminated-union` type. The expression-form `Array.isArray` rules relax this to any narrowable path (var or field chain).
 
+**Checking narrow's output.** `narrow-checks.ts` reports optional values that reach transform unwrapped and `someMatch` binders that collide with user names or enclosing binders; `tests/narrow-checks.test.ts` runs it over every example and fixture. `fuzz/narrowing-fuzz.ts` generates small modules that guard optional values and then use them, and reports modules that fail those checks or `dafny resolve`, shrunk to a minimal module. Run it from `tools/` with `npm run fuzz:narrowing`; `--help` lists the seed, run-count and replay options. It is not part of the test suite.
+
 ## Peephole Rules
 
 Local IR-to-IR rewrites applied bottom-up to fixed point at each node, in `peephole.ts`. They eliminate Some/None ceremony that comes from `Map.get(k)` and `Record<K,V>` index access (both lowered to `methodCall(map, "get", [k])`, which `dafny-emit` renders as `(if k in m then Some(m[k]) else None)`).
@@ -269,16 +276,16 @@ Each rule is local and semantics-preserving. The pass takes a `backend` paramete
 
 **Expression rules**
 
-| Pattern | Rewrites to |
-|---------|-------------|
-| `match m.get(k) { Some(v) => sb, None => nb }` | `if k in m then (let v = m[k] in sb) else nb` |
+| Pattern                                                                                 | Rewrites to                                   |
+| --------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `match m.get(k) { Some(v) => sb, None => nb }`                                          | `if k in m then (let v = m[k] in sb) else nb` |
 | `let x = m.get(k) in match x { Some(v) => sb, None => nb }` (when `x` not used in arms) | `if k in m then (let v = m[k] in sb) else nb` |
 
 **Statement rules**
 
-| Pattern | Rewrites to |
-|---------|-------------|
-| `match m.get(k) { Some(v) => sb, None => nb }` (statement-level) | `if k in m { var v := m[k]; sb } else { nb }` |
+| Pattern                                                                             | Rewrites to                                   |
+| ----------------------------------------------------------------------------------- | --------------------------------------------- |
+| `match m.get(k) { Some(v) => sb, None => nb }` (statement-level)                    | `if k in m { var v := m[k]; sb } else { nb }` |
 | `let x = m.get(k); match x { Some(v) => sb, None => nb }` (when `x` not used after) | `if k in m { var v := m[k]; sb } else { nb }` |
 
 The let-collapse rules require the bound variable to not be referenced after the match (conservative use-count check, no shadowing analysis). When the variable is referenced elsewhere, the `let` is preserved and only the inline `match` rule fires.
@@ -287,14 +294,15 @@ The bound value `m[k]` is captured once via `let` (expression form) or `var` (st
 
 ### Boolean simplification rules (Dafny only)
 
-| Pattern | Rewrites to |
-|---------|-------------|
-| `if c then false else true` | `¬c` |
-| `if c then true else false` | `c` |
-| `if c then b else false` | `c && b` |
-| `if c then true else b` | `c \|\| b` |
+| Pattern                     | Rewrites to |
+| --------------------------- | ----------- |
+| `if c then false else true` | `¬c`        |
+| `if c then true else false` | `c`         |
+| `if c then b else false`    | `c && b`    |
+| `if c then true else b`     | `c \|\| b`  |
 
 These apply only for the Dafny backend. They emit `∧`/`∨` in the IR, which:
+
 - Dafny renders as `&&`/`||` — short-circuit Bool, sound for termination analysis when the right operand contains a recursive call.
 - Lean renders as `∧`/`∨` — Prop conjunction/disjunction, which evaluate both arguments. For recursive functions like `if n = 0 then true else f(n - 1) ∧ ...`, the recursive call appears unconditionally in the term and Lean's structural-termination check fails.
 
@@ -304,30 +312,71 @@ For Lean we keep the original `if-then-else` form, which preserves the condition
 
 The Dafny emitter wraps `if-then-else` and `let` (var-binding) expressions in parentheses (alongside `match`). Without the parens, an outer `arr[idx]` post-fix would parse into the else branch — e.g., `if c then a else []` followed by `[i]` becomes `... else [][i]` which type-checks against the `[]` rather than the whole if. Always wrapping is verbose but safe.
 
+## Fork integration checks
+
+The fork combines upstream `87b907a`, optional narrowing from
+[midspiral/LemmaScript#242](https://github.com/midspiral/LemmaScript/pull/242)
+at `25e6ceb`, and the self-run and investigation work from fork PRs #7 and #10.
+The narrowing PR is still open upstream. Its formerly failing chain corpus
+now must pass `narrow-checks.test.ts`.
+
+Upstream owns callback argument binding and lowering, including index, source
+array, rest, and default arguments. `Number.isSafeInteger(bigint)` returns
+`false` on both backends, matching JavaScript. The fork retains explicit
+rejection of string/boolean `BigInt` and `Number` conversions that would
+otherwise lower as an identity; `autohavoc` can still abstract them.
+Narrowing uses `refine` to retain the callback metadata when a guard unwraps
+a captured parameter, including a default closure's later-parameter capture.
+
+After building the tools, run these from the repository root:
+
+```sh
+node tools/dist/lsc.js check --backend=dafny
+npx tsx --test tools/tests/*.test.ts
+(cd tools && npm run fuzz:narrowing -- --seed 1 --out /absolute/scratch/directory)
+npx tsx investigations/peephole-pair-scans.ts
+./tools/test-fixtures.sh
+./regen-lean.sh
+./regen-dafny.sh --no-verify
+git diff --exit-code -- '*.dfy' '*.dfy.gen' '*.def.lean' '*.types.lean'
+```
+
+`LemmaScript-files.txt` selects `typedir`, `ir`, and `typedecls` for the
+self-check. Regenerate each explicitly with `lsc regen --backend=dafny
+tools/src/<module>.ts` after a source or compiler change, preserving handwritten
+proof additions. The `typedir` transitivity proof supplies membership witnesses
+for the callback-index sequence used by upstream's `every` lowering.
+
+CI runs the ordinary tests, deterministic fuzzer, investigation, generated-output
+checks, and self-check on pull requests targeting `dev` and on pushes to `dev`.
+The pair-scan investigation uses the current optimizer by default; set
+`PAIR_SCAN_BASELINE=36eb31d` to repeat its original baseline comparison.
+Production statement-pair scanning remains unchanged.
+
 ## Current State
 
-| File | Phase | Role |
-|------|-------|------|
-| `rawir.ts` | Types | Raw IR type definitions |
-| `extract.ts` | Extract | ts-morph → Raw IR |
-| `specparser.ts` | (parser) | Parses `//@ ` annotations → RawExpr |
-| `resolve.ts` | Resolve | Raw IR → Typed IR (types and type-narrowing) |
-| `typedir.ts` | Types | Typed IR type definitions (incl. `someMatch`/`tagMatch`) |
-| `narrow.ts` | Narrow | Typed IR → Typed IR (structural narrowing → `someMatch` / `tagMatch`) |
-| `condition-facts.ts` | (shared) | What a condition establishes — detection + materializers, used by narrow, resolve, transform |
-| `ir.ts` | Types | Backend-neutral IR type definitions |
-| `transform.ts` | Transform | Typed IR → IR |
-| `peephole.ts` | Peephole | IR → IR (Some/None ceremony elimination) |
-| `types.ts` | (shared) | TypeDeclInfo, parseTsType |
-| `typedecls.ts` | (shared) | Declaration lookup (exact / dotted / generic-base-sliced) |
-| `builtins.ts` | (shared) | Builtin classification table — one `BuiltinId` per operation, stamped by resolve |
-| `names.ts` | (shared) | Fresh-name minting — collision-safe internal identifiers |
-| `lean-emit.ts` | Emit | IR → Lean text |
-| `dafny-emit.ts` | Emit | IR → Dafny text |
-| `lean-commands.ts` | CLI | Lean gen/check commands |
-| `dafny-commands.ts` | CLI | Dafny gen/gen-check/regen/check commands |
-| `info-command.ts` | CLI | `lsc info` — per-function spec summary JSON; `--typed` — Typed IR contract for satellites |
-| `config.ts` | CLI/shared | Option registry, config discovery/validation, file overrides, artifact path mapping |
-| `run-log.ts` | CLI | Run log: `.lemmascript/` directory, source snapshots, one record per Dafny `check`/`regen`; reads records back |
-| `runs-command.ts` | CLI | `lsc runs` — catches, open and dropped failures from the run log, with diff evidence and change hints |
-| `lsc.ts` | CLI | Wires the pipeline, dispatches to backend |
+| File                 | Phase      | Role                                                                                                           |
+| -------------------- | ---------- | -------------------------------------------------------------------------------------------------------------- |
+| `rawir.ts`           | Types      | Raw IR type definitions                                                                                        |
+| `extract.ts`         | Extract    | ts-morph → Raw IR                                                                                              |
+| `specparser.ts`      | (parser)   | Parses `//@ ` annotations → RawExpr                                                                            |
+| `resolve.ts`         | Resolve    | Raw IR → Typed IR (types and type-narrowing)                                                                   |
+| `typedir.ts`         | Types      | Typed IR type definitions (incl. `someMatch`/`tagMatch`)                                                       |
+| `narrow.ts`          | Narrow     | Typed IR → Typed IR (structural narrowing → `someMatch` / `tagMatch`)                                          |
+| `condition-facts.ts` | (shared)   | What a condition establishes — detection + materializers, used by narrow, resolve, transform                   |
+| `ir.ts`              | Types      | Backend-neutral IR type definitions                                                                            |
+| `transform.ts`       | Transform  | Typed IR → IR                                                                                                  |
+| `peephole.ts`        | Peephole   | IR → IR (Some/None ceremony elimination)                                                                       |
+| `types.ts`           | (shared)   | TypeDeclInfo, parseTsType                                                                                      |
+| `typedecls.ts`       | (shared)   | Declaration lookup (exact / dotted / generic-base-sliced)                                                      |
+| `builtins.ts`        | (shared)   | Builtin classification table — one `BuiltinId` per operation, stamped by resolve                               |
+| `names.ts`           | (shared)   | Fresh-name minting — collision-safe internal identifiers                                                       |
+| `lean-emit.ts`       | Emit       | IR → Lean text                                                                                                 |
+| `dafny-emit.ts`      | Emit       | IR → Dafny text                                                                                                |
+| `lean-commands.ts`   | CLI        | Lean gen/check commands                                                                                        |
+| `dafny-commands.ts`  | CLI        | Dafny gen/gen-check/regen/check commands                                                                       |
+| `info-command.ts`    | CLI        | `lsc info` — per-function spec summary JSON; `--typed` — Typed IR contract for satellites                      |
+| `config.ts`          | CLI/shared | Option registry, config discovery/validation, file overrides, artifact path mapping                            |
+| `run-log.ts`         | CLI        | Run log: `.lemmascript/` directory, source snapshots, one record per Dafny `check`/`regen`; reads records back |
+| `runs-command.ts`    | CLI        | `lsc runs` — catches, open and dropped failures from the run log, with diff evidence and change hints          |
+| `lsc.ts`             | CLI        | Wires the pipeline, dispatches to backend                                                                      |

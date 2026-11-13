@@ -223,6 +223,8 @@ export interface Module {
 // ── Literal queries ──────────────────────────────────────────
 
 /** Expand JavaScript's shortest decimal spelling without exponent syntax. */
+// Double formatting is outside LemmaScript's number model; self-run uses the signature only.
+//@ extern
 export function decimalNumberLiteral(value: number): string {
   if (!Number.isFinite(value)) throw new Error(`Cannot emit non-finite numeric literal: ${value}`);
   const text = String(value);
@@ -246,6 +248,8 @@ export function decimalNumberLiteral(value: number): string {
  *  and `Math.pow(2, n)` is a double, both of which lie past 2^53. A `num`
  *  outside the safe-integer range has already lost precision, so it is not a
  *  usable answer — hence null. */
+// BigInt(string) parsing is outside LemmaScript's model; self-run uses the signature only.
+//@ extern
 export function exactIntegerLiteral(e: Expr): bigint | null {
   if (e.kind === "bigint") return BigInt(e.value);
   if (e.kind === "num") return Number.isSafeInteger(e.value) ? BigInt(e.value) : null;

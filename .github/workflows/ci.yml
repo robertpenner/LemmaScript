@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   tools:
@@ -33,7 +33,14 @@ jobs:
 
       - uses: ./.github/actions/setup-dafny
 
-      - name: Reject implicit declaration skips
+      - name: Check narrowing fuzzer
+        working-directory: tools
+        run: npm run fuzz:narrowing -- --seed 1 --out "${{ runner.temp }}/narrowing-fuzz"
+
+      - name: Check pair-scan investigation
+        run: npx tsx investigations/peephole-pair-scans.ts
+
+      - name: Test compiler and reject implicit declaration skips
         run: ./tools/test-fixtures.sh
 
       - name: Regenerate Lean from TypeScript
@@ -119,6 +126,39 @@ jobs:
           untracked=$(git ls-files --others --exclude-standard -- '*.dfy.gen')
           if [ -n "$untracked" ]; then
             echo "ERROR: Untracked .dfy.gen files:"
+            echo "$untracked"
+            exit 1
+          fi
+
+  # LemmaScript run on its own compiler modules, listed in the root
+  # LemmaScript-files.txt. Fails on a broken proof or a stale .dfy.gen.
+  self-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install tools dependencies
+        working-directory: tools
+        run: npm ci
+
+      - uses: ./.github/actions/setup-dafny
+
+      - name: Check self-run modules
+        run: npx tsx tools/src/lsc.ts check --backend=dafny
+
+      - name: Check self-run generated files are up to date
+        run: |
+          git diff --exit-code -- 'tools/src/*.dfy.gen' 'tools/src/*.dfy'
+          untracked=$(git ls-files --others --exclude-standard -- 'tools/src/*.dfy.gen' 'tools/src/*.dfy')
+          if [ -n "$untracked" ]; then
+            echo "ERROR: Untracked self-run Dafny files:"
             echo "$untracked"
             exit 1
           fi

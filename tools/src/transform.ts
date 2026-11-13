@@ -849,6 +849,13 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
           e.fn.field === "fromCharCode" && e.args.length === 1) {
         return { kind: "app", fn: "StringFromCharCode", args: [lowerExpr(e.args[0], binds)] };
       }
+      // BigInt(s) / Number(s) on a string or boolean: the emitters lower these
+      // conversions as the identity, which would hand back the string or
+      // boolean unchanged. `//@ autohavoc` has already abstracted them when on.
+      if (e.fn.kind === "var" && (e.fn.name === "BigInt" || e.fn.name === "Number") && e.ty.kind === "unknown" &&
+          e.args.length === 1 && (e.args[0].ty.kind === "string" || e.args[0].ty.kind === "bool")) {
+        throw new Error(`${e.fn.name}() of a ${e.args[0].ty.kind} is not supported`);
+      }
       // Number.isSafeInteger(n) on an integer: a bigint is never a safe integer
       // in JS, so the result is false. A `number` is an unbounded integer in the
       // model, so the JS bound -(2^53 - 1) <= n <= 2^53 - 1 must be stated.

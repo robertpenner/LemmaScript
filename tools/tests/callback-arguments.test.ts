@@ -105,6 +105,26 @@ test("default closures compose through dependencies, rest observations, and lexi
   assert.equal(result.status, 0, result.output);
 });
 
+test("logical narrowing keeps callback-default captures bound to the later parameter", () => {
+  for (const condition of [
+    "extra !== undefined && extra + 1 === 8",
+    "extra === undefined || extra + 1 === 8",
+  ]) {
+    const source = `export function f(extra: number): boolean[] {
+      //@ requires extra === 3
+      //@ ensures \\result[0] === true
+      return [7].map((value, index, source, read = (n: number) => ${condition},
+        extra = value > 0 ? value : undefined) => read(0));
+    }`;
+    assert.deepEqual(execute(source, 3), [true], condition);
+    const correct = verify(generate(source));
+    assert.equal(correct.status, 0, correct.output);
+    const incorrect = verify(generate(source.replace("result[0] === true", "result[0] === false")));
+    assert.notEqual(incorrect.status, 0, incorrect.output);
+    assert.match(incorrect.output, /postcondition could not be proved/);
+  }
+});
+
 test("a callback function binding shadows module call metadata", () => {
   const source = `function read(n: number, extra?: number): number { return 3; }
     export function f(): number[] {

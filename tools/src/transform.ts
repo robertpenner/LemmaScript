@@ -923,7 +923,7 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
         if (e.args.length !== 1)
           throw new Error(`${name} expects exactly one argument, got ${e.args.length}`);
         const arg = e.args[0];
-        if (arg.ty.kind === "int" && arg.ty.big)
+        if ((arg.ty.kind === "int" || arg.ty.kind === "nat") && arg.ty.big)
           throw new Error(`${name} does not accept a bigint argument (JavaScript throws TypeError)`);
         if (e.fn.field === "trunc" && arg.kind === "binop" && arg.op === "/" &&
             isIntegral(arg.left.ty) && isIntegral(arg.right.ty)) {

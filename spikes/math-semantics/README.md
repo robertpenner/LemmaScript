@@ -93,23 +93,28 @@ as exact.
 - **Dafny at `60cab87`** reports what `lsc gen --backend=dafny` emitted for the
   fixtures in `fixtures/`. "Rejected" means `lsc gen` exited 1 with
   `ERROR: Dafny emission failed for 'f' in <file>: Unsupported Dafny method call: .<name>() on unknown`.
-  See [Dafny status](#dafny-status).
+  For emitted files the column quotes the count line from `dafny verify`.
+  Most fixtures have no `requires` or `ensures`, so Dafny reports
+  "0 verified, 0 errors": it parsed and typechecked the file and had no proof
+  obligation to discharge. Only a fixture with a contract or a subtype result
+  (such as `nat`) produces a nonzero "verified" count. See
+  [Dafny status](#dafny-status).
 
 ## Normative table
 
 | Member | ECMAScript 2026 clause | Finite results, with the deciding sentence | Exact special cases | Real meaning agrees on | Mathlib counterpart and divergences | Lean `Float` (4.34.0) | Dafny at `60cab87` |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `Math.abs` | 21.3.2.1 `sec-math.abs` | Exact: "If n < -0𝔽, return -n." then "Return n." | NaN → NaN; -0 → +0; -∞ → +∞ | all finite n | `abs` on `ℝ`; no finite divergence | `Float.abs`, model-backed `def` (Float.lean:524, extern `fabs`) | int: `MathAbs(x)` (result `nat`); real: `MathAbsReal(x)`; both verify |
-| `Math.min` | 21.3.2.26 `sec-math.min` | Exact: "If number < lowest, set lowest to number." Note: "+0𝔽 is considered to be larger than -0𝔽." | any NaN argument → NaN; min(+0, -0) → -0; no arguments → +∞ | all finite arguments | `min` on `ℝ`; no finite divergence | `instance : Min Float := minOfLe` (Float.lean:529) over model-backed `Float.decLe`; NaN and ±0 results depend on argument order ([table below](#lean-float-against-node)) | int: `MathMin(a, b)`; real: `MathMinReal(a, b)`; no NaN or -0 case |
-| `Math.max` | 21.3.2.25 `sec-math.max` | Exact: "If number > highest, set highest to number." Same Note as `min`. | any NaN argument → NaN; max(-0, +0) → +0; no arguments → -∞ | all finite arguments | `max` on `ℝ`; no finite divergence | `instance : Max Float := maxOfLe` (Float.lean:531); NaN and ±0 results depend on argument order | int: `MathMax(a, b)`; real: `MathMaxReal(a, b)`; no NaN or -0 case |
-| `Math.floor` | 21.3.2.16 `sec-math.floor` | Exact: "Return the greatest (closest to +∞) integral Number value that is not greater than n." | NaN, ±∞, ±0 → n; 0 < n < 1 → +0 | all finite n | `Int.floor` (`⌊x⌋`); no finite divergence | `Float.floor`, opaque (Float.lean:510, extern `floor`) | int: identity; real: `FloorReal(x)` = `x.Floor` (result `int`); verifies |
-| `Math.ceil` | 21.3.2.10 `sec-math.ceil` | Exact: "Return the smallest (closest to -∞) integral Number value that is not less than n." | NaN, ±∞, ±0 → n; -1 < n < 0 → -0 | all finite n | `Int.ceil` (`⌈x⌉`); no finite divergence | `Float.ceil`, opaque (Float.lean:498, extern `ceil`) | int: identity; real: `CeilReal(x)` (result `int`); verifies |
+| `Math.abs` | 21.3.2.1 `sec-math.abs` | Exact: "If n < -0𝔽, return -n." then "Return n." | NaN → NaN; -0 → +0; +∞ → +∞; -∞ → +∞ | all finite n | `abs` on `ℝ`; no finite divergence | `Float.abs`, model-backed `def` (Float.lean:524, extern `fabs`) | int: `MathAbs(x)`, whose preamble returns `nat`; Dafny proves that subtype obligation ("1 verified, 0 errors"). real: `MathAbsReal(x)`; "0 verified, 0 errors" (parsed and typechecked only) |
+| `Math.min` | 21.3.2.26 `sec-math.min` | Exact: "If number < lowest, set lowest to number." Note: "+0𝔽 is considered to be larger than -0𝔽." | any NaN argument → NaN; min(+0, -0) → -0; no arguments → +∞ | all finite arguments | `min` on `ℝ`; no finite divergence | `instance : Min Float := minOfLe` (Float.lean:529) over model-backed `Float.decLe`; NaN and ±0 results depend on argument order ([table below](#lean-float-against-node)) | int: `MathMin(a, b)`; real: `MathMinReal(a, b)`; both "0 verified, 0 errors" (parsed and typechecked only); no NaN or -0 case. Positional calls lower only with exactly two arguments (`transform.ts` checks `e.args.length === 2`); `Math.min(x, y, z)` is rejected. Spread `Math.min(...xs)` lowers to `MinOfSeq(xs)`, which has `requires \|s\| > 0`; JavaScript returns +∞ for an empty array, and Dafny reports the unguarded call as "function precondition could not be proved" |
+| `Math.max` | 21.3.2.25 `sec-math.max` | Exact: "If number > highest, set highest to number." Same Note as `min`. | any NaN argument → NaN; max(-0, +0) → +0; no arguments → -∞ | all finite arguments | `max` on `ℝ`; no finite divergence | `instance : Max Float := maxOfLe` (Float.lean:531); NaN and ±0 results depend on argument order | int: `MathMax(a, b)`; real: `MathMaxReal(a, b)`; both "0 verified, 0 errors" (parsed and typechecked only); no NaN or -0 case. Same arity rule as `min`. Spread `Math.max(...xs)` lowers to `MaxOfSeq(xs)` with `requires \|s\| > 0`; JavaScript returns -∞ for an empty array |
+| `Math.floor` | 21.3.2.16 `sec-math.floor` | Exact: "Return the greatest (closest to +∞) integral Number value that is not greater than n." | NaN, ±∞, ±0 → n; 0 < n < 1 → +0 | all finite n | `Int.floor` (`⌊x⌋`); no finite divergence | `Float.floor`, opaque (Float.lean:510, extern `floor`) | int: identity; real: `FloorReal(x)` = `x.Floor` (result `int`); both "0 verified, 0 errors" (parsed and typechecked only). `Math.floor(a / b)` with integral `a` and `b` lowers to `JSFloorDiv(a, b)`, which has `requires b != 0`; JavaScript gives ±∞ or NaN when b is 0, and the exact integer quotient can differ from `Math.floor` of the rounded binary64 quotient outside the safe-integer range (`Math.floor(2 ** 60 / 3)` is 384307168202282304, the integer floor is 384307168202282325) |
+| `Math.ceil` | 21.3.2.10 `sec-math.ceil` | Exact: "Return the smallest (closest to -∞) integral Number value that is not less than n." | NaN, ±∞, ±0 → n; -1 < n < 0 → -0 | all finite n | `Int.ceil` (`⌈x⌉`); no finite divergence | `Float.ceil`, opaque (Float.lean:498, extern `ceil`) | int: identity; real: `CeilReal(x)` (result `int`); both "0 verified, 0 errors" (parsed and typechecked only) |
 | `Math.round` | 21.3.2.29 `sec-math.round` | Exact: "Return the integral Number closest to n, preferring the Number closer to +∞ in the case of a tie." | NaN, ±∞, integral n → n; 0 < n < 0.5 → +0; -0.5 ≤ n < 0 → -0 | all finite n | `round` with `round_eq` (`round x = ⌊x + 1/2⌋`): ties go toward +∞ as in JavaScript; `example` checks round(-2.5) = -2, round(2.5) = 3, round(-0.5) = 0 (JavaScript gives -0, which `ℝ` cannot express) | `Float.round`, opaque (Float.lean:517, extern C `round`, ties away from zero): `Float.round (-2.5)` is -3 and `Float.round (-0.5)` is -1, JavaScript gives -2 and -0 | rejected (int and real) |
 | `Math.trunc` | 21.3.2.37 `sec-math.trunc` | Exact: "Return the integral Number nearest n in the direction of +0𝔽." | NaN, ±∞, ±0 → n; 0 < n < 1 → +0; -1 < n < 0 → -0 | all finite n | No declaration cited. It can be written with `Int.floor` for x ≥ 0 and `Int.ceil` for x < 0. Unverified: whether Mathlib has a dedicated truncation for `ℝ`; I did not search all of Mathlib. | absent (no `Float.trunc` in the 4.34.0 sources) | rejected (int and real) |
-| `Math.sign` | 21.3.2.30 `sec-math.sign` | Exact: "If n < -0𝔽, return -1𝔽." then "Return 1𝔽." | NaN, +0, -0 → n | all finite n | `Real.sign`; `Real.sign_zero` gives 0 at 0, matching +0; no finite divergence | absent (no `Float.sign`) | rejected (int and real) |
+| `Math.sign` | 21.3.2.30 `sec-math.sign` | Exact: "If n < -0𝔽, return -1𝔽." then "Return 1𝔽." | NaN, +0, -0 → n; +∞ → 1; -∞ → -1 | all finite n | `Real.sign`; `Real.sign_zero` gives 0 at 0, matching +0; no finite divergence | absent (no `Float.sign`) | rejected (int and real) |
 | `Math.sqrt` | 21.3.2.33 `sec-math.sqrt` | Exact: "Return 𝔽(the square root of ℝ(n))." | NaN, +0, -0, +∞ → n; n < -0 → NaN | n ≥ 0 | `Real.sqrt`. Diverges for x < 0: `Real.sqrt_eq_zero_of_nonpos` gives 0 where JavaScript gives NaN; `example` checks √(-1) = 0 | `Float.sqrt`, model-backed `def` (Float.lean:478, extern `sqrt`) | rejected |
 | `Math.cbrt` | 21.3.2.9 `sec-math.cbrt` | Approximated: "Return an implementation-approximated Number value representing the cube root of ℝ(n)." | NaN, ±∞, ±0 → n | all finite n | No cube-root declaration cited (unverified whether one exists). Writing it as `x ^ (1/3 : ℝ)` with `Real.rpow` diverges for x < 0: `example` checks (-8) ^ (1/3) = 1, where `Math.cbrt(-8)` is -2 | `Float.cbrt`, opaque (Float.lean:486, extern `cbrt`) | rejected |
-| `Math.pow` and `**` | 21.3.2.27 `sec-math.pow` ("Return Number::exponentiate(base, exponent).") and 6.1.6.1.3 `sec-numeric-types-number-exponentiate` | Approximated: "It returns an implementation-approximated value representing the result of raising base to the exponent power." The last step: "Return an implementation-approximated Number value representing the result of raising ℝ(base) to the ℝ(exponent) power." | exponent NaN → NaN; exponent ±0 → 1 (even for base NaN); base NaN → NaN; base ±∞ and base ±0 by sign of exponent and whether it is an odd integral Number; exponent +∞ with abs(base) > 1, = 1, < 1 → +∞, NaN, +0; exponent -∞ with abs(base) > 1, = 1, < 1 → +0, NaN, +∞; base < -0 with non-integral exponent → NaN | base > 0 with finite exponent; base < 0 with integral exponent; base = 0 with exponent > 0 | `Real.rpow`. Diverges at base 0 with exponent < 0: `Real.zero_rpow` gives 0 where JavaScript gives +∞ (`example`: 0 ^ (-1) = 0). Diverges at base < 0 with non-integral exponent: `Real.rpow_def_of_neg` defines a finite value where JavaScript gives NaN (`example`s: (-1) ^ (1/2) = 0 and (-8) ^ (1/3) = 1). Agrees: `Real.rpow_zero`, `Real.one_rpow`, `Real.rpow_natCast` (`example`: (-2) ^ 3 = -8) | `Float.pow`, opaque (Float.lean:471, extern C `pow`); `^` is `instance : HomogeneousPow Float := ⟨Float.pow⟩` (Float.lean:527). C `pow` returns 1 for 1 ^ NaN and (±1) ^ (±∞); JavaScript returns NaN | `Math.pow`: rejected. `x ** y`: `lsc gen` exits 0 and emits `(x ** y)`, which Dafny 4.11 rejects with `Error: invalid UnaryExpression` (parse error) |
+| `Math.pow` and `**` | 21.3.2.27 `sec-math.pow` ("Return Number::exponentiate(base, exponent).") and 6.1.6.1.3 `sec-numeric-types-number-exponentiate` | Approximated: "It returns an implementation-approximated value representing the result of raising base to the exponent power." The last step: "Return an implementation-approximated Number value representing the result of raising ℝ(base) to the ℝ(exponent) power." | exponent NaN → NaN; exponent ±0 → 1 (even for base NaN); base NaN → NaN; base +∞ → +∞ if exponent > 0, else +0; base -∞ → -∞ if exponent > 0 and an odd integral Number, +∞ if exponent > 0 otherwise, -0 if exponent < 0 and an odd integral Number, +0 if exponent < 0 otherwise; base +0 → +0 if exponent > 0, else +∞; base -0 → -0 if exponent > 0 and an odd integral Number, +0 if exponent > 0 otherwise, -∞ if exponent < 0 and an odd integral Number, +∞ if exponent < 0 otherwise (only base -∞ and base -0 depend on the exponent being an odd integral Number); exponent +∞ with abs(base) > 1, = 1, < 1 → +∞, NaN, +0; exponent -∞ with abs(base) > 1, = 1, < 1 → +0, NaN, +∞; base < -0 with non-integral exponent → NaN | base > 0 with finite exponent; base < 0 with integral exponent; base = 0 with exponent ≥ 0 (0 ** 0 is 1, the same value as the real convention and `Real.rpow_zero`) | `Real.rpow`. Diverges at base 0 with exponent < 0: `Real.zero_rpow` gives 0 where JavaScript gives +∞ (`example`: 0 ^ (-1) = 0). Diverges at base < 0 with non-integral exponent: `Real.rpow_def_of_neg` defines a finite value where JavaScript gives NaN (`example`s: (-1) ^ (1/2) = 0 and (-8) ^ (1/3) = 1). Agrees: `Real.rpow_zero`, `Real.one_rpow`, `Real.rpow_natCast` (`example`: (-2) ^ 3 = -8) | `Float.pow`, opaque (Float.lean:471, extern C `pow`); `^` is `instance : HomogeneousPow Float := ⟨Float.pow⟩` (Float.lean:527). C `pow` returns 1 for 1 ^ NaN and (±1) ^ (±∞); JavaScript returns NaN | `Math.pow`: rejected. `x ** y`: `lsc gen` exits 0 and emits `(x ** y)`, which Dafny 4.11 rejects with `Error: invalid UnaryExpression` (parse error) |
 | `Math.exp` | 21.3.2.14 `sec-math.exp` | Approximated: "Return an implementation-approximated Number value representing the exponential function of ℝ(n)." | NaN, +∞ → n; ±0 → 1; -∞ → +0 | all finite n | `Real.exp`; no finite divergence | `Float.exp`, opaque (Float.lean:436, extern `exp`) | rejected |
 | `Math.expm1` | 21.3.2.15 `sec-math.expm1` | Approximated: "Return an implementation-approximated Number value representing exp - 1." | NaN, ±0, +∞ → n; -∞ → -1 | all finite n | No `expm1` declaration cited; `Real.exp x - 1` has no finite divergence | absent (no `Float.expm1`) | rejected |
 | `Math.log` | 21.3.2.21 `sec-math.log` | Approximated: "Return an implementation-approximated Number value representing ln(ℝ(n))." | NaN, +∞ → n; 1 → +0; ±0 → -∞; n < -0 → NaN | n > 0 | `Real.log`. Diverges at 0: `Real.log_zero` gives 0 where JavaScript gives -∞. Diverges for x < 0: `Real.log_neg_eq_log` gives log(-x) = log x where JavaScript gives NaN (`example`: log(-1) = 0) | `Float.log`, opaque (Float.lean:450, extern `log`) | rejected |
@@ -236,7 +241,8 @@ three rounding `example`s, and the `BitVec` `example`s for `imul` and `clz32`.
 
 `vectors/gen.mjs` evaluates each member on a fixed list of inputs and writes
 `vectors/math-special-values.json`. It uses no randomness and no network, and
-`Math.random` is excluded. The current file holds 1405 records.
+`Math.random` is excluded. The current file holds 1487 records, 1014 exact
+and 473 approximated.
 
 Inputs:
 
@@ -245,9 +251,23 @@ Inputs:
   2<sup>53</sup> - 1, 2<sup>53</sup>, 2<sup>53</sup> + 2, 2<sup>31</sup>,
   -2<sup>31</sup>, 2<sup>32</sup>, 4294967295, `Math.PI`, `Math.PI / 2`,
   1e-300, and 3.4028235677973366e38.
-- Binary members use the 121-pair cross product of ±0, NaN, ±∞, ±1, ±0.5, ±2,
-  plus targeted pairs per member (for example `pow(-8, 1/3)`, `pow(2, -1075)`,
-  `hypot(Infinity, NaN)`, `imul(4294967295, 5)`, `min(-0, 0)`).
+- Binary members (`pow`, `atan2`, `imul`) and the two-argument cases of the
+  variadic members (`min`, `max`, `hypot`) use the 121-pair cross product of
+  ±0, NaN, ±∞, ±1, ±0.5, ±2; ten subnormal and extreme pairs shared by all of
+  them (`[MIN_VALUE, 2]`, `[-MIN_VALUE, 2]`, `[2, MIN_VALUE]`,
+  `[2, -MIN_VALUE]`, `[MIN_VALUE, MIN_VALUE]`, `[-MIN_VALUE, -MIN_VALUE]`,
+  `[MAX_VALUE, MAX_VALUE]`, `[-MAX_VALUE, MAX_VALUE]`, `[MAX_VALUE, 2]`,
+  `[2, MAX_VALUE]`); and targeted pairs per member (for example
+  `pow(-8, 1/3)`, `pow(2, -1075)`, `hypot(Infinity, NaN)`,
+  `imul(4294967295, 5)`, `min(-0, 0)`).
+- `min`, `max`, and `hypot` also get thirteen argument lists of other lengths:
+  no arguments (`min` gives +∞, `max` gives -∞, `hypot` gives +0); one
+  argument (NaN, -0, +0, +∞, -∞, -5); and three arguments (`[1, -0, 0]`,
+  `[-0, 0, -0]`, `[1, NaN, Infinity]`, `[Infinity, NaN, 1]`,
+  `[-Infinity, 1, 2]`, `[3, 4, 12]`). `inputs` in these records has 0, 1, or
+  3 entries.
+- Within each member, an input list that repeats an earlier one bit for bit
+  (compared by `hex`, so 0 and -0 differ) is dropped, keeping the first.
 - `**` has eight records for the operator form: 1 to NaN, ±1 to ±∞, NaN to 0,
   and ±0 to -1.
 
@@ -285,13 +305,19 @@ Second, for `approximated` records the `result` is only what Node v24.17.0
 returned; another engine or version may return a different Number value and
 still conform. `exact` records are the ones a backend must reproduce bit for
 bit. The `class` follows the spec step, so `Math.atan(Infinity)` is
-`approximated` even though it is a special case.
+`approximated` even though it is a special case. The classifier decides from
+the inputs alone. For `atan2(y, x)` it marks a record exact when either
+argument is NaN, when y is ±0 and x > 0 or x is +0, or when y is finite and
+nonzero and x is +∞; those are the steps of 21.3.2.8 that return NaN, +0, or
+-0. All other `atan2` steps, including every case with y = ±∞, are
+approximated. So `atan2(MIN_VALUE, 2)` is approximated even though V8 returns
++0 for it.
 
 Record counts by member (exact / approximated): `abs`, `floor`, `ceil`,
 `round`, `trunc`, `sign`, `sqrt`, `fround`, `clz32` 32 / 0 each; `imul`
-126 / 0; `min`, `max` 123 / 0 each; `**` 8 / 0; `atan` 3 / 29; `atan2`
-37 / 88; `cbrt`, `cos`, `exp`, `expm1`, `sin`, `tan` 5 / 27 each; `hypot`
-63 / 62; `log`, `log2`, `log10` 15 / 17 each; `log1p` 11 / 21; `pow` 102 / 33.
+136 / 0; `min`, `max` 144 / 0 each; `**` 8 / 0; `atan` 3 / 29; `atan2`
+37 / 94; `cbrt`, `cos`, `exp`, `expm1`, `sin`, `tan` 5 / 27 each; `hypot`
+71 / 74; `log`, `log2`, `log10` 15 / 17 each; `log1p` 11 / 21; `pow` 97 / 42.
 
 ## Dafny status
 
@@ -302,27 +328,62 @@ is one exported function `f`. The `int` fixtures use plain `number`, which
 LemmaScript reads as `int`; the `real` fixtures add `//@ type x real` (and the
 same for `y`) and `//@ type \result real`.
 
-Emitted and checked with `dafny verify` (Dafny 4.11.0):
+Emitted and checked with `dafny verify` (Dafny 4.11.0). The last column
+quotes Dafny's summary line. "0 verified, 0 errors" with exit 0 means Dafny
+parsed and typechecked the file and found no proof obligation, because the
+fixture has no contract and returns a plain `int` or `real`.
 
-| Fixture        | Emitted body                                   | `dafny verify`                                  |
-| -------------- | ---------------------------------------------- | ----------------------------------------------- |
-| `absInt.ts`    | `MathAbs(x)` with preamble `function MathAbs(x: int): nat { if x >= 0 then x else -x }` | 1 verified, 0 errors          |
-| `absReal.ts`   | `MathAbsReal(x)`                               | 0 errors                                        |
-| `minInt.ts`    | `MathMin(x, y)`                                | not run                                         |
-| `minReal.ts`   | `MathMinReal(x, y)`                            | 0 errors                                        |
-| `maxInt.ts`    | `MathMax(x, y)`                                | 0 errors                                        |
-| `maxReal.ts`   | `MathMaxReal(x, y)`                            | not run                                         |
-| `floorInt.ts`  | `x`                                            | not run                                         |
-| `ceilInt.ts`   | `x`                                            | not run                                         |
-| `floorReal.ts` | `FloorReal(x)`, preamble `x.Floor`             | 0 errors                                        |
-| `ceilReal.ts`  | `CeilReal(x)`, preamble `if x == (x.Floor as real) then x.Floor else x.Floor + 1` | 0 errors       |
-| `expOpInt.ts`  | `(x ** y)`                                     | `Error: invalid UnaryExpression`, 1 parse error |
-| `expOpReal.ts` | `(x ** y)`                                     | `Error: invalid UnaryExpression`, 1 parse error |
+| Fixture                    | Emitted body                                                                       | `dafny verify`                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `absInt.ts`                | `MathAbs(x)` with preamble `function MathAbs(x: int): nat { if x >= 0 then x else -x }` | exit 0, "1 verified, 0 errors" (the obligation is the `nat` result)                         |
+| `absReal.ts`               | `MathAbsReal(x)`                                                                   | exit 0, "0 verified, 0 errors"                                                              |
+| `minInt.ts`                | `MathMin(x, y)`                                                                    | exit 0, "0 verified, 0 errors"                                                              |
+| `minReal.ts`               | `MathMinReal(x, y)`                                                                | exit 0, "0 verified, 0 errors"                                                              |
+| `maxInt.ts`                | `MathMax(x, y)`                                                                    | exit 0, "0 verified, 0 errors"                                                              |
+| `maxReal.ts`               | `MathMaxReal(x, y)`                                                                | exit 0, "0 verified, 0 errors"                                                              |
+| `floorInt.ts`              | `x`                                                                                | exit 0, "0 verified, 0 errors"                                                              |
+| `ceilInt.ts`               | `x`                                                                                | exit 0, "0 verified, 0 errors"                                                              |
+| `floorReal.ts`             | `FloorReal(x)`, preamble `x.Floor`                                                 | exit 0, "0 verified, 0 errors"                                                              |
+| `ceilReal.ts`              | `CeilReal(x)`, preamble `if x == (x.Floor as real) then x.Floor else x.Floor + 1`  | exit 0, "0 verified, 0 errors"                                                              |
+| `expOpInt.ts`              | `(x ** y)`                                                                         | exit 2, `Error: invalid UnaryExpression`, "1 parse errors detected in expOpInt.dfy"         |
+| `expOpReal.ts`             | `(x ** y)`                                                                         | exit 2, `Error: invalid UnaryExpression`, "1 parse errors detected in expOpReal.dfy"        |
+| `floorDivInt.ts`           | `JSFloorDiv(x, y)` with `requires (y != 0)` from `//@ requires y !== 0`            | exit 0, "2 verified, 0 errors"                                                              |
+| `floorDivIntUnguarded.ts`  | `JSFloorDiv(x, y)`, no `requires`                                                  | exit 4, `Error: function precondition could not be proved`, "1 verified, 1 error"           |
+| `minSpreadInt.ts`          | `MinOfSeq(xs)` for `Math.min(...xs)`, `xs: seq<int>`, no `requires`                | exit 4, `Error: function precondition could not be proved`, "3 verified, 1 error"           |
+| `maxSpreadIntGuarded.ts`   | `MaxOfSeq(xs)` with `requires (\|xs\| > 0)` from `//@ requires xs.length > 0`    | exit 0, "4 verified, 0 errors"                                                              |
+
+The four fixtures in the last rows check lowerings that `transform.ts`,
+`extract.ts`, and `dafny-emit.ts` perform at `60cab87`:
+
+- `Math.floor(a / b)` with integral operands. `transform.ts` lines 893 to 908
+  rewrite it to `JSFloorDiv(a, b)` for Dafny before the `real` branch is
+  tried, matching the `SPEC.md` line 473 row. The preamble at `dafny-emit.ts`
+  lines 1123 to 1132 has `requires b != 0`. JavaScript evaluates
+  `Math.floor(1 / 0)` to +∞, `Math.floor(-1 / 0)` to -∞, `Math.floor(0 / 0)`
+  to NaN, and `Math.floor(-0 / 5)` to -0. It also rounds the quotient to
+  binary64 before flooring, so above 2^53 the results differ:
+  `Math.floor(2 ** 60 / 3)` is 384307168202282304 (it prints as
+  384307168202282300), while the integer floor of 2^60 / 3 is
+  384307168202282325. The 2^53 observation comes from my Node probe; I did not
+  find it documented in LemmaScript.
+- Positional `Math.min` and `Math.max`. `transform.ts` lines 872 to 883 lower
+  them only when the call has exactly two arguments (and `Math.abs` only with
+  one). Any other arity falls through to the generic method-call path, which
+  `lsc gen` rejects: `min3Int.ts` (`Math.min(x, y, z)`) exits 1 with
+  `ERROR: Dafny emission failed for 'f' in min3Int.ts: Unsupported Dafny method call: .min() on unknown`.
+- Spread `Math.min(...xs)` and `Math.max(...xs)`. `extract.ts` lines 479 to
+  490 rewrite them to `MinOfSeq` and `MaxOfSeq` (via `buildSpreadConcat`).
+  The preambles at `dafny-emit.ts` lines 1528 to 1575 take `seq<int>` and
+  have `requires |s| > 0`, with lemmas `MinOfSeqConcat` and `MaxOfSeqConcat`.
+  JavaScript returns +∞ for `Math.min()` and -∞ for `Math.max()` on an empty
+  array, so the Dafny lowering is defined only where JavaScript returns a
+  finite element, and an unguarded call leaves a precondition Dafny cannot
+  prove.
 
 Rejected by `lsc gen` (exit 1, error raised at `tools/src/dafny-emit.ts:588`):
 `round`, `trunc`, and `sign` (both int and real fixtures), `sqrt`, `cbrt`, `pow`,
 `exp`, `expm1`, `log`, `log1p`, `log2`, `log10`, `sin`, `cos`, `tan`, `atan`,
-`atan2`, `hypot`, `imul`, `fround`, `clz32`. The message has the form
+`atan2`, `hypot`, `imul`, `fround`, `clz32`, plus `min3Int.ts` above. The message has the form
 `ERROR: Dafny emission failed for 'f' in sqrtReal.ts: Unsupported Dafny method call: .sqrt() on unknown`.
 
 This matches `SPEC.md` at `60cab87`: its lowering table (lines 473 to 482)

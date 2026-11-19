@@ -53,8 +53,21 @@ const UNARY = [
   Math.PI, Math.PI / 2, 1e-300, 3.4028235677973366e38,
 ];
 
-// Binary inputs: a cross product of a small special set, plus targeted pairs.
+// Binary inputs: a cross product of a small special set, subnormal and extreme
+// pairs shared by every binary member, plus targeted pairs per member.
 const BINARY_BASE = [0, -0, NaN, Infinity, -Infinity, 1, -1, 0.5, -0.5, 2, -2];
+const BINARY_COMMON = [
+  [Number.MIN_VALUE, 2], [-Number.MIN_VALUE, 2], [2, Number.MIN_VALUE], [2, -Number.MIN_VALUE],
+  [Number.MIN_VALUE, Number.MIN_VALUE], [-Number.MIN_VALUE, -Number.MIN_VALUE],
+  [Number.MAX_VALUE, Number.MAX_VALUE], [-Number.MAX_VALUE, Number.MAX_VALUE],
+  [Number.MAX_VALUE, 2], [2, Number.MAX_VALUE],
+];
+// Argument lists for the variadic members (Math.min, Math.max, Math.hypot) at
+// arities other than 2: no arguments, one argument, and three arguments.
+const VARIADIC = [
+  [], [NaN], [-0], [0], [Infinity], [-Infinity], [-5],
+  [1, -0, 0], [-0, 0, -0], [1, NaN, Infinity], [Infinity, NaN, 1], [-Infinity, 1, 2], [3, 4, 12],
+];
 const BINARY_EXTRA = {
   pow: [
     [-8, 1 / 3], [-1, 0.5], [0, -1], [-0, -1], [-0, -3], [-0, 3], [2, 1024], [2, -1075],
@@ -81,8 +94,8 @@ function finiteApprox(specialIf) {
 
 const MEMBERS = {
   abs: { arity: 1, fn: Math.abs, classify: exact },
-  min: { arity: 2, fn: Math.min, classify: exact },
-  max: { arity: 2, fn: Math.max, classify: exact },
+  min: { arity: 'variadic', fn: Math.min, classify: exact },
+  max: { arity: 'variadic', fn: Math.max, classify: exact },
   floor: { arity: 1, fn: Math.floor, classify: exact },
   ceil: { arity: 1, fn: Math.ceil, classify: exact },
   round: { arity: 1, fn: Math.round, classify: exact },
@@ -110,19 +123,24 @@ const MEMBERS = {
   tan: { arity: 1, fn: Math.tan, classify: finiteApprox(isNaNOrInfOrZero) },
   // atan: NaN, ±0 -> n; ±∞ -> approximated ±π/2.
   atan: { arity: 1, fn: Math.atan, classify: finiteApprox((x) => Number.isNaN(x) || x === 0) },
-  // atan2(y, x): exact only for NaN and the results that are signed zeros.
+  // atan2(y, x), from the steps of 21.3.2.8 that return a fixed value:
+  // either argument NaN -> NaN; y is ±0 and (x > +0 or x is +0) -> y;
+  // y finite and nonzero and x is +∞ -> +0 or -0 with the sign of y.
+  // Every other step (including y = ±∞, y = ±0 with x < 0 or x = -0, and
+  // finite nonzero y with x = -∞ or ±0) is implementation-approximated.
   atan2: {
     arity: 2,
     fn: Math.atan2,
     classify: (y, x) => {
       if (Number.isNaN(y) || Number.isNaN(x)) return 'exact';
-      const r = Math.atan2(y, x);
-      return r === 0 ? 'exact' : 'approximated';
+      if (y === 0 && (x > 0 || Object.is(x, 0))) return 'exact';
+      if (Number.isFinite(y) && y !== 0 && x === Infinity) return 'exact';
+      return 'approximated';
     },
   },
   // hypot: any ±∞ -> +∞; then any NaN -> NaN; all ±0 -> +0.
   hypot: {
-    arity: 2,
+    arity: 'variadic',
     fn: Math.hypot,
     classify: (...xs) =>
       xs.some((v) => v === Infinity || v === -Infinity) || xs.some(Number.isNaN) || xs.every(isZero)
@@ -155,8 +173,24 @@ function build() {
   const records = [];
   for (const name of Object.keys(MEMBERS).sort()) {
     const m = MEMBERS[name];
-    const inputs =
-      m.arity === 1 ? UNARY.map((x) => [x]) : [...cross(BINARY_BASE), ...(BINARY_EXTRA[name] ?? [])];
+    const candidates =
+      m.arity === 1
+        ? UNARY.map((x) => [x])
+        : [
+            ...cross(BINARY_BASE),
+            ...BINARY_COMMON,
+            ...(BINARY_EXTRA[name] ?? []),
+            ...(m.arity === 'variadic' ? VARIADIC : []),
+          ];
+    // Keep the first occurrence of each input tuple, compared by bit pattern
+    // so that 0 and -0 stay distinct.
+    const seen = new Set();
+    const inputs = candidates.filter((args) => {
+      const key = args.map(hex).join(',');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     for (const args of inputs) {
       const result = m.fn(...args);
       records.push({

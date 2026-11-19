@@ -1,4 +1,9 @@
-repro/R14_FromRealLiteralIncomplete.dfy(7,43): Error: Verification of 'NegZero' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+repro/R14_FromRealLiteralIncomplete.dfy(7,60): Error: a postcondition could not be proved on this return path
+  |
+7 | lemma NegZero() ensures fp64.FromReal(0.0) == fp64.Neg(0.0) {}
+  |                                                             ^
+
+repro/R14_FromRealLiteralIncomplete.dfy(7,43): Related location: this is the postcondition that could not be proved
   |
 7 | lemma NegZero() ensures fp64.FromReal(0.0) == fp64.Neg(0.0) {}
   |                                            ^^
@@ -23,10 +28,15 @@ repro/R14_FromRealLiteralIncomplete.dfy(10,39): Related location: this is the po
 10 | lemma Pos() ensures fp64.FromReal(0.0) != 0.0 {}
    |                                        ^^
 
-repro/R14_FromRealLiteralIncomplete.dfy(11,39): Error: Verification of 'One' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+repro/R14_FromRealLiteralIncomplete.dfy(11,46): Error: a postcondition could not be proved on this return path
+   |
+11 | lemma One() ensures fp64.FromReal(1.0) == 1.0 {}
+   |                                               ^
+
+repro/R14_FromRealLiteralIncomplete.dfy(11,39): Related location: this is the postcondition that could not be proved
    |
 11 | lemma One() ensures fp64.FromReal(1.0) == 1.0 {}
    |                                        ^^
 
 
-Dafny program verifier finished with 1 verified, 1 error, 4 time outs
+Dafny program verifier finished with 1 verified, 3 errors, 2 time outs

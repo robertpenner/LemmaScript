@@ -16,14 +16,17 @@ DESIGN_NUMBERS.md §8 Phase 2:
   methods (`fp64.Add`, `fp64.Equal`, `fp64.Less`, ...). Library:
   `corpus/C_lib.dfy`.
 
-Every number below comes from the run recorded in `results/`. Anything the
-spike did not run is marked "not measured". This report does not recommend
-an encoding.
+Every number below comes from the run recorded in `results/`, except the
+"Run-to-run variance" subsection, which also cites two earlier full runs
+kept outside the repository. Anything the spike did not run is marked "not
+measured". This report does not recommend an encoding.
 
 ## Toolchains and method
 
-From `results/versions.txt` (run started 2026-11-19T16:26:26Z on Darwin
-arm64, 10 logical cpus, Node v24.17.0):
+`results/versions.txt` is the shared version header for every file in
+`results/`; the CSV files carry no version header of their own. From it
+(run started 2026-11-19T18:37:55Z on Darwin arm64, 10 logical cpus, Node
+v24.17.0):
 
 | | Pinned (A, B) | Nightly (C, repros) |
 |---|---|---|
@@ -32,23 +35,28 @@ arm64, 10 logical cpus, Node v24.17.0):
 | Bundled Z3 | z3-4.12.1, z3-4.14.1 | z3-4.12.1, z3-4.16.0 |
 | Prover actually used (`verify --boogie -trace`, "Using prover") | z3-4.12.1 | z3-4.16.0 |
 
-The corpus runs use each toolchain's default prover. Each repro runs twice
-on the nightly, once per bundled Z3, selected with `--solver-path`.
+The corpus runs use each toolchain's default prover. Each repro runs once
+on the nightly per bundled Z3 binary (`run.sh` finds them with a glob of
+`z3/bin/z3-*`), selected with `--solver-path`.
 
-The recorded run was:
+The recorded run was, with exit code 0:
 
 ```sh
 cd spikes/dafny-number-encodings
-DAFNY_FP=<nightly>/dafny/dafny \
-VECTORS=<LemmaScript checkout>/spikes/math-semantics/vectors/math-special-values.json \
-./run.sh
+DAFNY_FP=<nightly>/dafny/dafny ./run.sh
 ```
 
 `DAFNY` defaults to the `dafny` on PATH (the pinned 4.11.0). In the
 recorded run `<nightly>` was the coordinator's scratch download
-`.../run-6WMCfLu3/dafny-nightly`. Without `VECTORS` the vectors section is
-skipped and the skip is written to `results/vectors.csv`. `SECTIONS` selects
-a subset of `verify repro js vectors`.
+`.../run-6WMCfLu3/dafny-nightly`. `VECTORS` defaults to the vendored
+`vectors/math-special-values.json`, a copy of fork #23's file whose source
+commit and sha256 are in `vectors/PROVENANCE.md`. If the vector file is
+missing, the vectors section prints a skip and leaves any existing
+`results/vectors*` in place. `SECTIONS` selects a subset of `verify repro
+js vectors`. `run.sh` checks for the Dafny binaries, Node, perl and the
+`bignumber.js` module before it starts, passes relative paths to Dafny, and
+removes the checkout's absolute path from the files it writes to
+`results/`.
 
 For each corpus file `run.sh` does:
 
@@ -59,11 +67,21 @@ For each corpus file `run.sh` does:
   same time limit. Output in `results/seeds/`.
 
 `results/summary.csv` holds the verifier's own "N verified, N errors, N time
-outs" line for every run, the wall-clock seconds, and the counts of
-`// @manual` (hand-written assertions and calls to helper lemmas) and
-`// @lemma` (helper lemma declarations) in the file. In isolated runs the
-counts are per assertion batch; in whole-file runs they are per Boogie
-implementation, so the two are not comparable with each other.
+outs" line for every run, the wall-clock seconds, and three tag counts per
+file. Each count matches only a comment tag at the end of a line:
+
+- `// @manual` marks a hand-written hint: an assertion, a ghost variable or
+  a call to a helper lemma inside a proof.
+- `// @helper` marks a lemma declared only so that another proof can call
+  it.
+- `// @target` marks a lemma that states a workload property. Workload
+  properties written as method or function contracts (W1 and the `bitwise`
+  functions) are not tagged.
+
+`@manual` plus `@helper` is the hand-written hint count; `@target` counts
+statements of the workload. In isolated runs the verifier counts are per
+assertion batch; in whole-file runs they are per Boogie implementation, so
+the two are not comparable with each other.
 
 The verification time limit was 30 s for every run. A timeout is counted as
 a finding, never retried with a larger limit.
@@ -82,80 +100,156 @@ fractions.
 - W4 `*_bitwise`: `x | 0`, `x >>> 0`, `Math.imul`, `a & b`, `x >>> n`.
 - W5 `*_lerp`: `a + t * (b - a)` and int/real bridges.
 
-Counts are verified, errors, time outs. "s" is wall-clock seconds.
+Counts are verified, errors, time outs. "s" is wall-clock seconds of the
+isolated run. The last three columns are the `@manual`, `@helper` and
+`@target` tag counts.
 
-| File | Isolated | s | Seed 1 | Seed 2 | Seed 3 | @manual | @lemma |
-|---|---|---|---|---|---|---|---|
-| A_lib | 8, 0, 0 | 4.91 | 5, 0, 0 | 5, 0, 0 | 5, 0, 0 | 1 | 1 |
-| A_safeint | 95, 1, 0 | 17.37 | 7, 0, 0 | 7, 0, 0 | 6, 0, 1 | 3 | 1 |
-| A_clamp | 14, 0, 0 | 12.44 | 6, 0, 0 | 6, 0, 0 | 6, 0, 0 | 0 | 2 |
-| A_bitwise | 73, 0, 3 | 42.56 | 11, 0, 3 | 11, 1, 2 | 11, 0, 3 | 8 | 6 |
-| B_lib | 77, 0, 0 | 7.62 | 16, 0, 0 | 16, 0, 0 | 16, 0, 0 | 0 | 0 |
-| B_safeint | 205, 0, 0 | 33.55 | 17, 0, 1 | 17, 0, 1 | 18, 0, 0 | 14 | 6 |
-| B_clamp | 27, 0, 0 | 3.80 | 8, 0, 0 | 8, 0, 0 | 8, 0, 0 | 0 | 5 |
-| B_signedzero | 46, 0, 0 | 4.61 | 10, 0, 0 | 10, 0, 0 | 10, 0, 0 | 0 | 8 |
-| B_bitwise | 42, 0, 2 | 34.63 | 13, 0, 1 | 13, 0, 1 | 14, 0, 0 | 6 | 7 |
-| B_lerp | 71, 0, 0 | 7.07 | 15, 1, 0 | 15, 1, 0 | 15, 1, 0 | 12 | 9 |
-| C_lib | 5, 0, 0 | 2.39 | 3, 0, 0 | 3, 0, 0 | 3, 0, 0 | 0 | 0 |
-| C_safeint | 59, 0, 28 | 189.53 | 3, 1, 2 | 3, 1, 2 | 3, 1, 2 | 1 | 0 |
-| C_clamp | 8, 0, 4 | 31.21 | 2, 0, 3 | 2, 0, 3 | 2, 0, 3 | 0 | 5 |
-| C_signedzero | 21, 0, 1 | 33.41 | 7, 0, 1 | 7, 0, 1 | 7, 0, 1 | 0 | 8 |
-| C_bitwise | 29, 1, 11 | 95.89 | 6, 0, 7 | 6, 0, 7 | 6, 0, 7 | 4 | 7 |
-| C_lerp | 17, 1, 6 | 64.09 | 5, 0, 4 | 5, 0, 4 | 5, 0, 4 | 0 | 5 |
+| File | Isolated | s | Seed 1 | Seed 2 | Seed 3 | manual | helper | target |
+|---|---|---|---|---|---|---|---|---|
+| A_lib | 8, 0, 0 | 1.10 | 5, 0, 0 | 5, 0, 0 | 5, 0, 0 | 0 | 0 | 0 |
+| A_safeint | 96, 1, 0 | 15.84 | 7, 0, 0 | 7, 0, 0 | 7, 0, 0 | 3 | 1 | 0 |
+| A_clamp | 14, 0, 0 | 1.53 | 6, 0, 0 | 6, 0, 0 | 6, 0, 0 | 0 | 0 | 2 |
+| A_bitwise | 73, 0, 3 | 32.00 | 11, 0, 3 | 11, 0, 3 | 11, 0, 3 | 8 | 2 | 4 |
+| B_lib | 77, 0, 0 | 6.00 | 16, 0, 0 | 16, 0, 0 | 16, 0, 0 | 0 | 0 | 0 |
+| B_safeint | 229, 0, 0 | 11.07 | 18, 0, 0 | 17, 0, 1 | 18, 0, 0 | 15 | 6 | 0 |
+| B_clamp | 27, 0, 0 | 1.60 | 8, 0, 0 | 8, 0, 0 | 8, 0, 0 | 0 | 0 | 5 |
+| B_signedzero | 46, 0, 0 | 2.45 | 10, 0, 0 | 10, 0, 0 | 10, 0, 0 | 0 | 0 | 8 |
+| B_bitwise | 78, 0, 4 | 32.93 | 19, 0, 3 | 18, 1, 3 | 18, 1, 3 | 13 | 2 | 10 |
+| B_lerp | 71, 0, 0 | 3.08 | 15, 1, 0 | 15, 1, 0 | 15, 1, 0 | 12 | 3 | 6 |
+| C_lib | 5, 0, 0 | 1.66 | 3, 0, 0 | 3, 0, 0 | 3, 0, 0 | 0 | 0 | 0 |
+| C_safeint | 86, 0, 33 | 230.31 | 4, 1, 2 | 4, 0, 3 | 4, 0, 3 | 3 | 0 | 0 |
+| C_clamp | 8, 0, 4 | 32.11 | 2, 0, 3 | 2, 0, 3 | 2, 0, 3 | 0 | 0 | 5 |
+| C_signedzero | 21, 0, 1 | 31.96 | 7, 0, 1 | 7, 0, 1 | 7, 0, 1 | 0 | 0 | 8 |
+| C_bitwise | 61, 5, 12 | 102.63 | 10, 2, 9 | 10, 2, 9 | 10, 2, 9 | 11 | 2 | 10 |
+| C_lerp | 19, 2, 8 | 62.60 | 6, 0, 5 | 6, 0, 5 | 6, 0, 5 | 0 | 0 | 6 |
 
-Hint totals across the encoding's files: A has 12 `@manual` and 10
-`@lemma`; B has 32 and 35; C has 5 and 25. The hint counts measure what the
-author wrote, not how much effort each encoding would need to verify fully:
-the A and B files were iterated until they verified, while the C files keep
-the hints that were tried and still time out.
+Totals across each encoding's files, from the isolated rows of
+`results/summary.csv`:
+
+| Encoding | `@manual` | `@helper` | hand-written hints (`@manual` + `@helper`) | `@target` |
+|---|---|---|---|---|
+| A | 11 | 3 | 14 | 6 |
+| B | 40 | 11 | 51 | 29 |
+| C | 14 | 2 | 16 | 29 |
+
+The target counts differ mainly because of W3, W4 and W5. Encoding A has
+no W3 or W5 file. In W4, `A_bitwise.dfy` states its concrete checks
+(`OrZero(2147483648) == -2147483648`, `Ushr0(-1) == 4294967295`, the two
+`Imul` cases, `And(-1, 255) == 255` and `UshrN(-1, 28) == 15`) as
+assertions in one untagged `method Examples()`, while B and C split the
+same checks into the four target lemmas `ImulExamples`, `Ushr0Examples`,
+`AndExample` and `UshrExample`. The three `@manual` assertions inside
+`Examples` are counted as hints. A also has no `OrZeroSpecials` or
+`OrZeroRange` lemma; see "Non-equivalent obligations" below.
+
+The hint counts measure what the author wrote, not how much effort each
+encoding would need to verify fully. The C files keep the A-equivalent
+hints (`MulBound`, `Bv32RoundTrip`, the two
+`ToInt32` assertions in `ImulSmall`, the two sequence assertions in
+`SumBounded`) whether or not the proof then verified.
 
 Where the failures are, from `results/verify/*.csv` (isolated batches that
 did not pass, per procedure) and the `Error` lines in `results/verify/*.out`
 and `results/seeds/*.out`:
 
 - A_safeint, isolated: one error, `result of operation might violate
-  newtype constraint for 'SafeInt'` at `s := s + a[i]` (74,11) in
-  `SumBounded` (33 of 34 batches pass). The same procedure verifies in the
-  seed 1 and seed 2 whole-file runs and times out in seed 3.
-- A_bitwise: `Bv32RoundTrip`, the lemma `(x as bv32) as int == x` for
+  newtype constraint for 'SafeInt'` at `s := s + a[i]` (75,11) in
+  `SumBounded` (41 of 42 batches pass). The procedure verifies in all three
+  seeded whole-file runs.
+- A_bitwise: the helper `Bv32RoundTrip`, `(x as bv32) as int == x` for
   `0 <= x < 2^32`, times out in every run. In the isolated run `Examples`
   times out at `assert And(-1, 255) == 255` (90,2) and `assert UshrN(-1,
-  28) == 15` (92,2), the two concrete assertions that go through `bv32`. Whole-file, `AndWithSelf`
-  times out under every seed, and seed 2 reports `assertion might not hold`
-  at `assert And(-1, 255) == 255` (90,2) where seeds 1 and 3 time out.
-- B_safeint: `Midpoint` times out whole-file under seeds 1 and 2 and
-  verifies under seed 3 and in isolation.
-- B_bitwise: `AndExample` and `UshrExample`, which state `-1 & 255` and
-  `-1 >>> 28` on concrete values through `bv32`, each time out in one
-  isolated batch; `AndExample` times out whole-file under seeds 1 and 2.
+  28) == 15` (92,2), the two concrete assertions that go through `bv32`.
+  Whole-file, `AndWithSelf`, `Bv32RoundTrip` and `Examples` time out under
+  every seed.
+- B_safeint: every isolated batch passes (229 of 229). Whole-file,
+  `Midpoint` timed out under seed 2 in this run; see "Run-to-run variance".
+- B_bitwise, isolated: `AndExample` (67,37), `UshrExample` (72,31),
+  `AndWithSelf` (105,20) and `Bv32RoundTrip` each time out in one batch.
+  Whole-file, `AndExample`, `AndWithSelf` and `Bv32RoundTrip` time out
+  under every seed, and seeds 2 and 3 report that `ImulSmall`'s
+  postcondition `Imul(a, b).r == a.r * b.r` (90,45) could not be proved;
+  under seed 1 and in isolation it verifies.
 - B_lerp: every isolated batch passes (71 of 71). Every whole-file run
   reports `assertion might not hold` at `assert 0.0 <= m.r <= d.r` (49,20),
   a hand assertion inside `LerpInRange`.
-- C_safeint: `Midpoint` well-formedness 0 of 6 batches pass, `BinarySearch`
-  25 of 42, `SumBounded` 23 of 28; all 28 failures are timeouts. Whole-file,
-  `Midpoint` and `BinarySearch` time out and the `SumBounded` invariant
-  `(s as real) <= (i as real) * (bound as real)` (63,26) is reported as not
-  maintained under all three seeds.
-- C_clamp: `ClampInRange` (1 of 3 batches), `ClampNegInRange` (2 of 3) and
-  `GuardsAgreeOffNaN` (0 of 1) time out. The concrete NaN and `-0` facts
+- C_safeint, isolated: `Midpoint` well-formedness passes 0 of 6 batches,
+  `BinarySearch` 36 of 57 and `SumBounded` 43 of 49; all 33 failures are
+  timeouts. Whole-file, `Midpoint` and `BinarySearch` time out under every
+  seed. `SumBounded` times out under seeds 2 and 3; under seed 1 the
+  invariant `(s as real) <= (i as real) * (bound as real)` (73,26) is
+  reported as not maintained.
+- C_clamp: `ClampInRange` (2 of 3 batches fail), `ClampNegInRange` (1 of
+  3) and `GuardsAgreeOffNaN` (1 of 1) time out. The concrete NaN and `-0` facts
   about clamp verify.
 - C_signedzero: `NormKeyCollapses`, that SameValueZero equals `Object.is`
-  after mapping `-0` to `+0`, times out. `ObjectIsIsIdentity` and the
-  other signed-zero lemmas verify.
-- C_bitwise: `OrZeroSpecials` (1 of 5 batches), `OrZeroRange` (1 of 3),
-  `OrZeroIdempotent`, `ImulExamples`, `Ushr0Examples`, `AndExample` and
-  `UshrExample` fail; 11 are timeouts. The one error is `ensures
-  OrZero(fp64.NaN) == 0.0` (36,27). JavaScript has `NaN | 0 === 0`, and
-  `OrZero(NaN)` is `fp64.FromReal(0 as real)` in this corpus, so the claim
-  is true; repro R14 shows that the verifier also reports errors on true
-  `FromReal` claims. Whether this one is a false claim or an incomplete
-  proof was not determined.
+  after mapping `-0` to `+0`, times out. `ObjectIsIsIdentity` (now stated
+  as `ObjectIs(x, y) <==> x == y`) and the other signed-zero lemmas verify.
+- C_bitwise, isolated: 17 of 78 batches fail, in `OrZeroSpecials` (3 of 5
+  batches fail), `OrZeroRange` (2 of 5), `OrZeroIdempotent`, `ImulExamples` (both
+  batches), `Ushr0Examples`, `AndExample`, `UshrExample`, `OrZeroOnInt32`
+  (1 of 5), `ImulSmall` (3 of 21), `AndWithSelf` and `Bv32RoundTrip`.
+  Twelve are timeouts. The five errors are `ensures OrZero(fp64.NaN) ==
+  0.0` (36,27), `ensures Imul(-1.0, 8.0) == -8.0` (56,33), `OrZeroOnInt32`'s
+  `ensures OrZero(x) == x` (86,20), and `ImulSmall`'s `assert ToInt32(a) ==
+  (a as real).Floor` (95,2) and `assert ToInt32(b) == (b as real).Floor`
+  (96,2). All five statements are true by the definitions in `C_lib.dfy`
+  and `C_bitwise.dfy` (`ToInt32` of a non-finite value is 0, `ToInt32` of
+  a finite value is `fp64.ToInt(x)` reduced modulo 2^32, and `OrZero(x)` is
+  `fp64.FromReal(ToInt32(x) as real)`), so each one is an incomplete proof.
+  For `OrZero(NaN)`, the right-hand side reduces to `fp64.FromReal(0 as
+  real) == 0.0`, which repro R14 `IntCast` proves on its own. Whole-file,
+  the seven lemmas from `OrZeroSpecials` to `UshrExample`, `AndWithSelf`
+  and `Bv32RoundTrip` time out under every seed, and `OrZeroOnInt32`'s
+  postcondition and `ImulSmall`'s assertion at (96,2) are errors.
 - C_lerp: `LerpExtremesIsNaN` verifies (Encoding C proves that
-  `lerp(-MAX_VALUE, MAX_VALUE, 0)` is NaN). `LerpAtOneOvershoots` (1 of 2
-  batches), `LerpEndpointsSmallInts`, `BridgeRoundTrip` and `BridgeAdd`
-  fail; the one error is `BridgeAdd`'s `Add(x, y) as real == x as real + y
-  as real` (62,50) for safe integers whose sum is safe, which is a true
-  statement about IEEE addition.
+  `lerp(-MAX_VALUE, MAX_VALUE, 0)` is NaN). In isolation,
+  `LerpAtOneOvershoots` (1 of 2 batches fail), `LerpEndpointsSmallInts` (2
+  of 4), `LerpInRangeSmallInts` (3 of 5, the postcondition goals at
+  (53,24), (54,26) and (54,64)), `BridgeRoundTrip` (2 of 3) and `BridgeAdd`
+  (2 of 9) fail. The two errors are `BridgeRoundTrip`'s `fp64.ToInt(fp64.FromReal(i
+  as real)) == i` (67,35) and `BridgeAdd`'s `Add(x, y) as real == x as real
+  + y as real` (75,50), both true statements about IEEE binary64 for safe
+  integers. Whole-file, all five of these lemmas time out under every seed.
+
+### Non-equivalent obligations
+
+The workloads were aligned across encodings where the encoding can state
+the same property. These obligations still differ:
+
+- W1 `SumBounded`: B requires every element to be `IsIntNum` and not
+  `-0`; A has no `-0` and C requires `IsSafeIntF`, which admits `-0` but
+  bounds the elements below by `fp64.LessOrEqual(0.0, a[i])`. B and C state
+  the sum against a `real`-valued `SumR`, A against an `int`-valued `Sum`.
+- W1 `BinarySearch`: A requires `|a| < 2^32` and returns a `SafeInt`; B
+  has no length bound and returns an `int`; C requires `|a| < 2^32` and
+  returns an `int`. B and C state hits and misses with `StrictEq`, A with
+  `==` and `!in`.
+- W2: A states `GuardFormsAgree` and `ClampIsMinMax` for all `SafeInt`
+  arguments. B and C state `NaNSeparatesGuards`, `ClampInRange`,
+  `ClampNegInRange`, `GuardsAgreeOffNaN` and `ClampKeepsNegZero`, which
+  have no A counterpart, and neither B nor C states `ClampIsMinMax`.
+- W3: B has `RemSign` (the sign of `%` results), which C lacks. C has
+  `ObjectIsIsIdentity` (the compiled `ObjectIs` agrees with ghost `==`),
+  which B lacks because B's `==` is datatype equality.
+- W4: A states its concrete checks in the untagged `method Examples()`;
+  B and C use four target lemmas. `OrZeroSpecials` (NaN and the
+  infinities map to 0) and `OrZeroRange` (the result of `x | 0` lies in
+  the int32 range) exist only in B and C, because A has no non-finite or
+  non-integer values. `OrZeroOnInt32` excludes `-0` in B and C, since
+  `-0 | 0` is `+0`; A has no `-0`.
+- W5: B states `LerpInRange` for all finite `a <= b` and `t` in
+  `[0, 1]` and `LerpAtOne` (`lerp(a, b, 1) == b`), which are true for exact
+  reals. C states `LerpAtOneOvershoots` and `LerpExtremesIsNaN`, the
+  JavaScript counterexamples to `LerpAtOne` and `LerpExtremesInB`. C's
+  `LerpEndpointsSmallInts` and `LerpInRangeSmallInts` restrict `a` and `b`
+  to integers in `[-1024, 1024]`; `t` is symbolic in
+  `LerpInRangeSmallInts`.
+- W5 bridges: B's `BridgeRoundTrip`, `BridgeAdd` and `BridgeMul` are
+  stated for every `int`, with the preconditions `i + j != 0` for
+  `BridgeAdd` and `i != 0 && j != 0` for `BridgeMul`. C's
+  `BridgeRoundTrip` and `BridgeAdd` are restricted to safe integers, where
+  binary64 is exact, and C has no `BridgeMul`.
 
 ## Answers to DESIGN_NUMBERS.md §5
 
@@ -190,9 +284,12 @@ In the nightly, the static methods `fp64.Add`, `Sub`, `Mul`, `Div`,
 total and follow IEEE 754 round-to-nearest-even. C_lib wraps every
 JavaScript operator in them, and C_lib verifies with no obligations at the
 call sites. The surface operators `+ - * /` and `< <= > >=` carry
-obligations. Repro R07 shows them: `x / -0.0` for non-NaN `x` reports "fp64
-division has invalid operand combination (e.g., ∞+(-∞), ∞*0, 0/0, ∞/∞)",
-and `x / 0.0` reports that and "possible division by zero" as well.
+obligations, and the nightly does not check them consistently. In repro
+R07 both methods divide a finite nonzero `x` by a zero literal, so the
+invalid-operand check (0/0) cannot fire and only the zero-divisor check
+applies. `ByPosZero` (`x / 0.0`) reports "possible division by zero" at
+(19,9). `ByNegZero` (`x / -0.0`) verifies with no error, so the checked `/`
+accepts a `-0.0` divisor that it rejects as `+0.0`.
 `fp64.FromReal` rounds; `as fp64` requires the value to be exactly
 representable; `fp64.ToInt` truncates and requires a finite argument;
 `Abs`, `Sqrt`, `Min`, `Max`, `Floor`, `Ceiling` and `Round` require
@@ -213,7 +310,8 @@ which is the A_safeint error above.
 and `+0` equals `-0`. C_lib uses it for `StrictEq`. Ghost `==` on `fp64` is
 identity (NaN equals NaN, `+0` differs from `-0`), which matches
 `Object.is`; C_signedzero's `ObjectIsIsIdentity` verifies that the compiled
-`ObjectIs` in C_lib agrees with it. Compiled `==` requires both operands to
+`ObjectIs` in C_lib agrees with it (`ensures ObjectIs(x, y) <==> x ==
+y`; it verifies in the isolated run and under all three seeds). Compiled `==` requires both operands to
 be non-NaN and not a pair of differently signed zeros, so it is unusable as
 `===` in general.
 
@@ -254,44 +352,95 @@ The spike wrote each of these as a library function:
 The vectors section checks the rounding, truncation and min/max functions
 against fork #23's table (see the topic 5 mapping below): 66 of 66 sampled
 vectors verify in B and in C. The `ToInt32` path in C did not verify on
-symbolic input (C_bitwise `OrZeroRange` and `OrZeroIdempotent` time out).
+symbolic input (C_bitwise `OrZeroRange` and `OrZeroIdempotent` time out,
+and `OrZeroOnInt32` reports an error on a true postcondition).
 
 ### 5. Whether representative LemmaScript proofs are stable under repeated isolated and whole-file verification, not merely whether concrete expressions reduce.
 
 The recorded run gives one isolated run and three seeded whole-file runs
 per file, so stability below means agreement among those four runs.
+Agreement within one run does not establish that a result is fixed: the
+"Run-to-run variance" subsection below lists the rows whose counts changed
+between three full runs, and every one of them involves a goal that sits
+near the 30 s limit.
 
 Encoding A: A_lib and A_clamp give the same result in all four runs.
-A_safeint verifies whole-file under seeds 1 and 2, times out under seed 3,
-and fails one isolated batch with an error. A_bitwise times out in every
-run, and under seed 2 one of the timeouts becomes an assertion error. Every
-A instability is in a procedure that uses `bv32` or the `SafeInt` sum.
+A_safeint verifies whole-file under all three seeds in this run and fails
+one isolated batch with a newtype error; an earlier full run timed out or
+failed under seed 3. A_bitwise has three timeouts in every run here; in an
+earlier run one of them became an assertion error under seed 2. Every
+unstable A row involves `bv32` or the `SafeInt` sum.
 
 Encoding B: B_lib, B_clamp and B_signedzero give the same result in all
-four runs. B_safeint verifies in isolation and under seed 3 and times out
-under seeds 1 and 2. B_bitwise verifies whole-file only under seed 3.
-B_lerp passes every isolated batch and fails the same hand assertion in
-every whole-file run.
+four runs. B_safeint verifies in isolation; whole-file, `Midpoint` timed out
+under seed 2 in this run. In the two runs of the 8ac8174 version of the
+file, it timed out under seeds 1 and 2 in one run and under no seed in the
+other. B_bitwise has three or four timeouts in every run, and
+`ImulSmall` verifies under some seeds and fails under others. B_lerp
+passes every isolated batch and fails the same hand assertion in every
+whole-file run.
 
-Encoding C: every file gives identical counts under all three seeds. The
-results are stable in the sense of repeatable; they are repeatable
-timeouts. Every C file other than C_lib has at least one timeout in every
-run. The procedures that verify are concrete facts or classification
-lemmas, while the symbolic range and order properties that the workloads
-need (clamp range, midpoint bounds, `| 0` range, safe-integer addition)
-time out. Repro R11 isolates the order facts: `Trichotomy` and
-`Transitivity` of `fp64.Less`/`LessOrEqual` on non-NaN values time out
-under both bundled Z3 versions.
+Encoding C: every file gives identical whole-file counts under all three
+seeds except C_safeint, where `SumBounded` times out under two seeds and
+reports an invariant error under the third. Those results repeat because
+most of them are timeouts. Every C file other than C_lib has at least one
+timeout in every run. The procedures that verify are concrete facts or
+classification lemmas, while the symbolic range and order properties that
+the workloads need (clamp range, midpoint bounds, `| 0` range, safe-integer
+addition, lerp range) time out or report errors on true statements. Repro
+R11 isolates the order facts: `Trichotomy` and `Transitivity` of
+`fp64.Less`/`LessOrEqual` on non-NaN values time out under both bundled Z3
+versions.
 
 Concrete expressions reduce in B and C: the 66 vector lemmas per encoding
-verify, with batch times under 0.2 s each.
+verify, and no single vector batch took more than 0.08 s
+(`results/vectors/*_vectors.csv`).
 
-Run-to-run variation was observed between full runs of `run.sh` during
-development; only the recorded run is committed and cited.
+#### Run-to-run variance
+
+Three full runs of `run.sh` produced the counts below. "Worker" is the run
+committed at 8ac8174, "Rerun" is the coordinator's rerun of 8ac8174 on the
+same machine and toolchains, and "Current" is the run committed with this
+report. The worker and rerun outputs are not in the repository (they are in
+the coordinator's scratch directory, `verify-20/results-worker/` and
+`verify-20/results-rerun/`). Counts are verified, errors, time outs. Every
+other exit code, `js.csv`, `vectors.csv` and repro classification matched
+across the three runs.
+
+Rows whose source file did not change in a way that affects verification
+between the runs:
+
+| Row | Worker | Rerun | Current |
+|---|---|---|---|
+| A_bitwise seed 2 | 11, 1, 2 | 11, 0, 3 | 11, 0, 3 |
+| R12 on Z3 4.12.1 | 3, 1, 1 | 3, 0, 2 | 3, 1, 1 |
+| R12 on Z3 4.16.0 | 3, 0, 2 | 3, 0, 2 | 3, 2, 0 |
+| R14 on Z3 4.12.1 | 1, 1, 4 | 1, 1, 4 | 1, 3, 2 |
+
+Rows that differed between the worker run and the rerun of the same
+source; the file then changed before the current run, so the current
+column is listed for reference and is not a third sample of the same
+proof:
+
+| Row | Worker | Rerun | Current |
+|---|---|---|---|
+| A_safeint seed 3 | 6, 0, 1 | 6, 1, 0 | 7, 0, 0 |
+| B_safeint seed 1 | 17, 0, 1 | 18, 0, 0 | 18, 0, 0 |
+| B_safeint seed 2 | 17, 0, 1 | 18, 0, 0 | 17, 0, 1 |
+| C_bitwise isolated | 29, 1, 11 | 29, 2, 10 | 61, 5, 12 |
+
+These rows are unstable near the time limit: the same goal times out in
+one run and verifies, or is reported as an error, in another. A count in
+any of these rows describes one run only. The workload changes between
+8ac8174 and the current run (see "Non-equivalent obligations") also changed
+the counts of A_safeint isolated, B_safeint isolated, B_bitwise, C_safeint,
+C_bitwise, C_lerp and repro R07; those differences come from the code and
+are not counted as variance. C_signedzero changed (`ObjectIsIsIdentity`
+now uses `==`) and kept the same counts.
 
 ### 6. The minimum Dafny version and any required artifact header/CLI flags.
 
-Encodings A and B use only `int`, `real`, `bv32` and datatypes and verify
+Encodings A and B use only `int`, `real`, `bv32` and datatypes and run
 on pinned Dafny 4.11.0 with no extra flags beyond `--allow-warnings`,
 `--verification-time-limit` and `--library`.
 
@@ -328,32 +477,37 @@ hand-written, not generated by `lsc`. Not measured.
    `fp64` bit patterns (R13), so a `bv64` encoding was not measured. The
    `bv32` round trip through `int` is the slowest part of every encoding:
    A's `Bv32RoundTrip` times out in every run, B's concrete `bv32` examples
-   time out in isolation, and C_bitwise fails 12 of its 41 isolated
-   batches (11 timeouts) with 349.33 s of summed batch time in
-   `results/verify/C_bitwise.csv`. Every encoding converts through `int`
+   (`AndExample` and `UshrExample`) time out in isolation, and C_bitwise
+   fails 17 of its 78 isolated batches (5 errors, 12 timeouts) with
+   454.61 s of summed batch time in `results/verify/C_bitwise.csv`. Every encoding converts through `int`
    before reaching `bv32`, so the cost includes that conversion.
 4. Z3 timeout behavior: at a 30 s limit, timeouts appear in A_bitwise,
-   B_safeint, B_bitwise and every C workload. On the nightly the two
-   bundled Z3 versions gave the same repro counts except R12 and R14, where
-   they split the failures differently between errors and timeouts. The
+   B_safeint, B_bitwise and every C workload. In the recorded run the two
+   bundled Z3 versions on the nightly gave the same repro counts except R12
+   and R14, where they split the failures differently between errors and
+   timeouts. Those two repros also changed counts between full runs under
+   the same Z3 version (see "Run-to-run variance"). The
    corpus was run with only the default prover of each toolchain; the C
    corpus under z3-4.12.1 was not measured.
 5. Shared conformance vector table: feasible for B and C. `vectors/gen-dfy.mjs`
-   reads fork #23's `math-special-values.json` (schema
-   `lemmascript-math-vectors/1`, sha256 recorded in `versions.txt`) and
+   reads the vendored copy of fork #23's `math-special-values.json`
+   (`vectors/math-special-values.json`, schema `lemmascript-math-vectors/1`,
+   provenance and sha256 in `vectors/PROVENANCE.md` and
+   `results/versions.txt`) and
    writes one `ObjectIs(Math...(args), expected)` lemma per sampled
    record, with operands as exact decimals from the record's `hex` field.
    It samples every 8th two-argument `Math.min` and `Math.max` record and
    every 2nd `Math.trunc` and `Math.round` record: 17 min, 17 max, 16 trunc
    and 16 round lemmas. B verifies 66 of 66 (100 verified batches including
-   well-formedness, 0 errors, 4.20 s); C verifies 66 of 66 (0 errors,
-   2.13 s). Encoding A cannot express the NaN, `-0` or fractional values in
+   well-formedness, 0 errors, 2.56 s wall time); C verifies 66 of 66 (0
+   errors, 2.90 s wall time). Encoding A cannot express the NaN, `-0` or fractional values in
    the table. Variadic min/max records and the other Math members in the
    table were not measured.
-6. Proof-authoring ergonomics: `@manual` and `@lemma` counts are in the
-   table above. B needed the most hand assertions (32), mostly in
-   B_safeint and B_lerp, where the datatype must be unfolded into its real
-   payload. A needed hand `bv32` facts in A_bitwise. C needs few hints for
+6. Proof-authoring ergonomics: `@manual`, `@helper` and `@target` counts
+   are in the tables above. B needed the most hand assertions (40): 15 in
+   B_safeint, 13 in B_bitwise and 12 in B_lerp, where the datatype must be
+   unfolded into its real payload. A needed 8 hand `bv32` facts in
+   A_bitwise. C needs few hints for
    concrete facts but its symbolic lemmas time out with or without the
    hints tried. C also has an authoring hazard that A and B do not: a type
    synonym `type F = fp64` crashes the verifier on the first literal (R10).
@@ -378,23 +532,27 @@ outcome unless noted.
 | R05 | `<=` versus ghost `==` on signed zeros | 11, 1, 0 | Reproduced. Antisymmetry fails; `SignedZeroWitness` verifies |
 | R06a | loop interval inference, `decreases` on an fp local | 4, 1, 0 | Not reproduced in this shape: "decreases expression could not be proved to decrease", which is the correct result |
 | R06b | loop interval inference, toggled sign | 6, 0, 0 | Reproduced. `OddCount` verifies a false assertion |
-| R07 | `/` by `-0.0` | 5, 3, 0 | Reproduced. `ByNegZero` reports only the invalid-operand error; `ByPosZero` also reports "possible division by zero" |
+| R07 | `/` by `-0.0`, finite nonzero dividend | 7, 1, 0 | Reproduced. `ByPosZero` reports "possible division by zero" at (19,9); `ByNegZero` verifies |
 | R08 | literal `~1e-5` one ULP low (boogie#1141) | 1, 1, 0 | Reproduced. `OneUlpLow` verifies, `CorrectlyRounded` fails |
 | R09 | `2.0 as fp64 as int` and `as real` | 2, 0, 4 | Reproduced. `TwoAsInt` and `TwoAsReal` time out at 30 s under both Z3 versions |
 
-R06a and R06b are rewritten from the PR's test `FpUnsoundLoopAndDivision`;
-the PR's exact program text was not copied. R04a, R04b and R10 print .NET
-stack traces; `results/repro/` keeps the first 40 lines.
+R06a, R06b and R07 are rewritten from the PR's test
+`FpUnsoundLoopAndDivision`; the PR's exact program text was not copied.
+`results/repro/` keeps every output that contains the "Dafny program
+verifier finished" summary line in full. Only outputs without that line
+are cut to their first 40 lines: the .NET stack traces of R04a, R04b and
+R10, and the short resolution errors of P01 and R13, which are shorter
+than 40 lines.
 
 The spike added five repros of its own while writing Encoding C:
 
 | Repro | What it checks | z3-4.16.0 | z3-4.12.1 | Outcome |
 |---|---|---|---|---|
 | R10 | literal assigned to `type F = fp64` | exit 1 | exit 1 | Crash: "System.ArgumentException: Not a float type: F" |
-| R11 | trichotomy and transitivity of `fp64.Less`/`LessOrEqual` | 1, 0, 2 | 1, 0, 2 | Both lemmas time out |
-| R12 | `FromReal(0.0) == 0.0`, `FromReal(1.0) == 1.0`, `ToInt(-1.0) == -1`, NaN uniqueness | 3, 0, 2 | 3, 1, 1 | Both `FromReal` lemmas fail (timeout or error); the other two verify |
+| R11 | trichotomy and transitivity of `fp64.Less`/`LessOrEqual`, and that a value between `0.0` and a finite bound is finite | 1, 0, 2 | 1, 0, 2 | `Trichotomy` and `Transitivity` time out; `NotGreaterThanFiniteIsFinite` verifies |
+| R12 | `FromReal(0.0) == 0.0`, `FromReal(1.0) == 1.0`, `ToInt(-1.0) == -1`, NaN uniqueness | 3, 2, 0 | 3, 1, 1 | Both `FromReal` lemmas fail: under z3-4.16.0 both are errors, under z3-4.12.1 `FromRealZero` times out and `FromRealOne` is an error. `ToIntNegOne` and `NaNIsUnique` verify. The split between errors and timeouts changed between full runs |
 | R13 | `fp64` to and from `bv64` with `as` | exit 2 | exit 2 | Resolution errors quoted under question 1 |
-| R14 | `FromReal(0.0)` and `FromReal(1.0)` facts, two false and four true | 1, 4, 1 | 1, 1, 4 | The false `NegZero` and `Pos` claims never verify. Of the true claims, only `IntCast` (`FromReal(0 as real) == 0.0`) verifies; `IsZero`, `NotNegative` and `One` time out or are reported as errors |
+| R14 | `FromReal(0.0)` and `FromReal(1.0)` facts, two false and four true | 1, 4, 1 | 1, 3, 2 | The false `NegZero` and `Pos` claims never verify. Of the true claims, only `IntCast` (`FromReal(0 as real) == 0.0`) verifies. Under z3-4.16.0 `NotNegative` and `One` are errors and `IsZero` times out; under z3-4.12.1 `One` is an error and `IsZero` and `NotNegative` time out. The split changed between full runs |
 
 R14 shows the verifier reporting errors on true statements
 (`NotNegative` and `One` under z3-4.16.0), so an "error" from `FromReal` on
@@ -436,9 +594,16 @@ faithful C# compilation, and its description does not mention JavaScript.
 
 ## Corrections to the brief
 
-- boogie#1141 merged on 2026-08-20 but is not in Boogie 3.5.5, which both
-  toolchains bundle; R08 still reproduces.
-- dafny#6514 is an open draft with no comments.
+The brief for this issue already corrected the issue body on these points,
+and the spike confirmed them:
+
+- boogie#1141 merged on 2026-08-20.
+- dafny#6514 is an open draft. It also has no comments.
 - dafny#6323 merged on 2025-11-07, after the 4.11.0 release.
 - The issue body points at #19 for vectors; the brief and this spike use
   fork #23's `math-special-values.json`.
+
+The spike found one more point that neither the issue body nor the brief
+states: boogie#1141 is not in Boogie 3.5.5, the version both toolchains
+bundle, so the literal rounding defect it fixes still reproduces on the
+nightly (R08).

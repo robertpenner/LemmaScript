@@ -1,4 +1,4 @@
-CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+CLI: Warning: The file 'corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
 corpus/C_clamp.dfy(36,53): Error: Verification of 'ClampInRange' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
 36 |   ensures var r := Clamp(x, lo, hi); r.IsFinite && Le(lo, r) && Le(r, hi)
@@ -21,4 +21,4 @@ corpus/C_clamp.dfy(48,27): Error: Verification of 'GuardsAgreeOffNaN' timed out 
 
 
 Dafny program verifier finished with 8 verified, 0 errors, 4 time outs
-Results File: /Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/results/verify/C_clamp.csv
+Results File: results/verify/C_clamp.csv

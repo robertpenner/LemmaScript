@@ -1,4 +1,4 @@
-CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/B_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+CLI: Warning: The file 'corpus/B_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
 
 Dafny program verifier finished with 46 verified, 0 errors
-Results File: /Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/results/verify/B_signedzero.csv
+Results File: results/verify/B_signedzero.csv

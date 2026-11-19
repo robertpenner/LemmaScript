@@ -1,38 +1,63 @@
-CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+CLI: Warning: The file 'corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
 corpus/C_bitwise.dfy(35,6): Error: Verification of 'OrZeroSpecials' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
-35 | lemma OrZeroSpecials() // @lemma
+35 | lemma OrZeroSpecials() // @target
    |       ^^^^^^^^^^^^^^
 
 corpus/C_bitwise.dfy(44,6): Error: Verification of 'OrZeroRange' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
-44 | lemma OrZeroRange(x: fp64) // @lemma
+44 | lemma OrZeroRange(x: fp64) // @target
    |       ^^^^^^^^^^^
 
 corpus/C_bitwise.dfy(50,6): Error: Verification of 'OrZeroIdempotent' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
-50 | lemma OrZeroIdempotent(x: fp64) // @lemma
+50 | lemma OrZeroIdempotent(x: fp64) // @target
    |       ^^^^^^^^^^^^^^^^
 
 corpus/C_bitwise.dfy(55,6): Error: Verification of 'ImulExamples' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
-55 | lemma ImulExamples() // @lemma
+55 | lemma ImulExamples() // @target
    |       ^^^^^^^^^^^^
 
 corpus/C_bitwise.dfy(61,6): Error: Verification of 'Ushr0Examples' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
-61 | lemma Ushr0Examples() // @lemma
+61 | lemma Ushr0Examples() // @target
    |       ^^^^^^^^^^^^^
 
 corpus/C_bitwise.dfy(66,6): Error: Verification of 'AndExample' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
-66 | lemma AndExample() // @lemma
+66 | lemma AndExample() // @target
    |       ^^^^^^^^^^
 
 corpus/C_bitwise.dfy(73,6): Error: Verification of 'UshrExample' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
-73 | lemma UshrExample() // @lemma
+73 | lemma UshrExample() // @target
    |       ^^^^^^^^^^^
 
+corpus/C_bitwise.dfy(87,0): Error: a postcondition could not be proved on this return path
+   |
+87 | {
+   | ^
 
-Dafny program verifier finished with 6 verified, 0 errors, 7 time outs
+corpus/C_bitwise.dfy(86,20): Related location: this is the postcondition that could not be proved
+   |
+86 |   ensures OrZero(x) == x
+   |                     ^^
+
+corpus/C_bitwise.dfy(96,2): Error: assertion could not be proved
+   |
+96 |   assert ToInt32(b) == (b as real).Floor; // @manual
+   |   ^^^^^^
+
+corpus/C_bitwise.dfy(107,6): Error: Verification of 'AndWithSelf' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+    |
+107 | lemma AndWithSelf(a: fp64) // @target
+    |       ^^^^^^^^^^^
+
+corpus/C_bitwise.dfy(115,6): Error: Verification of 'Bv32RoundTrip' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+    |
+115 | lemma Bv32RoundTrip(x: int) // @helper
+    |       ^^^^^^^^^^^^^
+
+
+Dafny program verifier finished with 10 verified, 2 errors, 9 time outs

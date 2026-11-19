@@ -1,17 +1,17 @@
-CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+CLI: Warning: The file 'corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
 corpus/C_clamp.dfy(33,6): Error: Verification of 'ClampInRange' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
-33 | lemma ClampInRange(x: fp64, lo: fp64, hi: fp64) // @lemma
+33 | lemma ClampInRange(x: fp64, lo: fp64, hi: fp64) // @target
    |       ^^^^^^^^^^^^
 
 corpus/C_clamp.dfy(40,6): Error: Verification of 'ClampNegInRange' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
-40 | lemma ClampNegInRange(x: fp64, lo: fp64, hi: fp64) // @lemma
+40 | lemma ClampNegInRange(x: fp64, lo: fp64, hi: fp64) // @target
    |       ^^^^^^^^^^^^^^^
 
 corpus/C_clamp.dfy(46,6): Error: Verification of 'GuardsAgreeOffNaN' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
-46 | lemma GuardsAgreeOffNaN(x: fp64, lo: fp64, hi: fp64) // @lemma
+46 | lemma GuardsAgreeOffNaN(x: fp64, lo: fp64, hi: fp64) // @target
    |       ^^^^^^^^^^^^^^^^^
 
 

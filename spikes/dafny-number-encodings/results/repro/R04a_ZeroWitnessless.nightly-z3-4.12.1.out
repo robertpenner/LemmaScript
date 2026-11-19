@@ -28,6 +28,7 @@ repro/R04a_ZeroWitnessless.dfy(6,5): Error: Internal error occurred during verif
     at Microsoft.Dafny.Compilation.<>c__DisplayClass60_0.<<VerifyUnverifiedSymbol>b__1>d.MoveNext()
  --- End of stack trace from previous location ---
     at Microsoft.Dafny.Compilation.VerifyUnverifiedSymbol(Boolean onlyPrepareVerificationForGutterTests, ICanVerify canVerify, ResolutionResult resolution, Func`2 taskFilter, Nullable`1 randomSeed)
+    at Microsoft.Dafny.Compilation.VerifyUnverifiedSymbol(Boolean onlyPrepareVerificationForGutterTests, ICanVerify canVerify, ResolutionResult resolution, Func`2 taskFilter, Nullable`1 randomSeed)
     at DafnyDriver.Commands.CliCompilation.VerifyAllLazily(Nullable`1 randomSeed)+MoveNext()
   |
 6 | type NonNaN = x: fp64 | !x.IsNaN
@@ -35,6 +36,5 @@ repro/R04a_ZeroWitnessless.dfy(6,5): Error: Internal error occurred during verif
 
 Unhandled exception. Cce+UnreachableException: Exception of type 'Cce+UnreachableException' was thrown.
    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TranslateLiteralExpr(LiteralExpr literalExpr)
-   at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)

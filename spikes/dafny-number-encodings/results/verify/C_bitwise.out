@@ -1,9 +1,4 @@
-CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
-corpus/C_bitwise.dfy(38,32): Error: Verification of 'OrZeroSpecials' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-   |
-38 |   ensures OrZero(fp64.Neg(0.0)) == 0.0
-   |                                 ^^
-
+CLI: Warning: The file 'corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
 corpus/C_bitwise.dfy(39,23): Error: Verification of 'OrZeroSpecials' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
 39 |   ensures OrZero(-1.5) == -1.0
@@ -39,15 +34,20 @@ corpus/C_bitwise.dfy(51,28): Error: Verification of 'OrZeroIdempotent' timed out
 51 |   ensures OrZero(OrZero(x)) == OrZero(x)
    |                             ^^
 
-corpus/C_bitwise.dfy(56,33): Error: Verification of 'ImulExamples' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-   |
-56 |   ensures Imul(65536.0, 65536.0) == 0.0
-   |                                  ^^
-
 corpus/C_bitwise.dfy(57,26): Error: Verification of 'ImulExamples' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
 57 |   ensures Imul(-1.0, 8.0) == -8.0
    |                           ^^
+
+corpus/C_bitwise.dfy(58,0): Error: a postcondition could not be proved on this return path
+   |
+58 | {
+   | ^
+
+corpus/C_bitwise.dfy(56,33): Related location: this is the postcondition that could not be proved
+   |
+56 |   ensures Imul(65536.0, 65536.0) == 0.0
+   |                                  ^^
 
 corpus/C_bitwise.dfy(62,22): Error: Verification of 'Ushr0Examples' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
    |
@@ -64,6 +64,41 @@ corpus/C_bitwise.dfy(74,26): Error: Verification of 'UshrExample' timed out afte
 74 |   ensures UshrN(-1.0, 28) == 15.0
    |                           ^^
 
+corpus/C_bitwise.dfy(87,0): Error: a postcondition could not be proved on this return path
+   |
+87 | {
+   | ^
 
-Dafny program verifier finished with 29 verified, 1 error, 11 time outs
-Results File: /Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/results/verify/C_bitwise.csv
+corpus/C_bitwise.dfy(86,20): Related location: this is the postcondition that could not be proved
+   |
+86 |   ensures OrZero(x) == x
+   |                     ^^
+
+corpus/C_bitwise.dfy(93,52): Error: Verification of 'ImulSmall' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+93 |   ensures Imul(a, b).IsFinite && Imul(a, b) as real == (a as real) * (b as real)
+   |                                                     ^^
+
+corpus/C_bitwise.dfy(95,2): Error: assertion could not be proved
+   |
+95 |   assert ToInt32(a) == (a as real).Floor; // @manual
+   |   ^^^^^^
+
+corpus/C_bitwise.dfy(96,2): Error: assertion could not be proved
+   |
+96 |   assert ToInt32(b) == (b as real).Floor; // @manual
+   |   ^^^^^^
+
+corpus/C_bitwise.dfy(108,20): Error: Verification of 'AndWithSelf' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+    |
+108 |   ensures And(a, a) == OrZero(a)
+    |                     ^^
+
+corpus/C_bitwise.dfy(117,29): Error: Verification of 'Bv32RoundTrip' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+    |
+117 |   ensures (x as bv32) as int == x
+    |                              ^^
+
+
+Dafny program verifier finished with 61 verified, 5 errors, 12 time outs
+Results File: results/verify/C_bitwise.csv

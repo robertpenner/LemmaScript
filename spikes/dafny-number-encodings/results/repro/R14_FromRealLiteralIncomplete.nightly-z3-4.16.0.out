@@ -38,3 +38,10 @@ repro/R14_FromRealLiteralIncomplete.dfy(11,46): Error: a postcondition could not
 11 | lemma One() ensures fp64.FromReal(1.0) == 1.0 {}
    |                                               ^
 
+repro/R14_FromRealLiteralIncomplete.dfy(11,39): Related location: this is the postcondition that could not be proved
+   |
+11 | lemma One() ensures fp64.FromReal(1.0) == 1.0 {}
+   |                                        ^^
+
+
+Dafny program verifier finished with 1 verified, 4 errors, 1 time out

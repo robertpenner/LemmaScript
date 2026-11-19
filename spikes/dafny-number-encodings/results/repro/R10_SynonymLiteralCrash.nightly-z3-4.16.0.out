@@ -33,8 +33,8 @@ Unhandled exception: System.ArgumentException: Not a float type: F
    at Microsoft.Dafny.TextDocumentLoader.ResolveInternal(Compilation compilation, Program program, CancellationToken cancellationToken)
    at Microsoft.Dafny.TextDocumentLoader.ResolveAsync(Compilation compilation, Program program, CancellationToken cancellationToken)
    at Microsoft.Dafny.Compilation.ResolveAsync()
-   at Microsoft.Dafny.VerifyCommand.HandleVerification(DafnyOptions options)
    at Microsoft.Dafny.DafnyNewCli.<>c__DisplayClass5_0.<<SetHandlerUsingDafnyOptionsContinuation>g__Handle|0>d.MoveNext()
 --- End of stack trace from previous location ---
    at System.CommandLine.Invocation.AnonymousCommandHandler.InvokeAsync(InvocationContext context)
    at System.CommandLine.Invocation.InvocationPipeline.<>c__DisplayClass4_0.<<BuildInvocationChain>b__0>d.MoveNext()
+--- End of stack trace from previous location ---

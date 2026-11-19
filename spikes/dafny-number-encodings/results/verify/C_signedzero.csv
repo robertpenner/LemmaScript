@@ -1,23 +1,23 @@
 TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
-NormKeyCollapses (correctness),Failed,00:00:30.0621291,26241197,0
-AddZeroNormalizes (correctness),Passed,00:00:00.1765365,475650,0
-ReciprocalOfZeros (correctness) (assertion batch 1),Passed,00:00:00.1092056,3243,0
-EqualityRelations (correctness) (assertion batch 2),Passed,00:00:00.0749454,4115,0
-EqualityRelations (correctness) (assertion batch 4),Passed,00:00:00.0673005,5540,0
-EqualityRelations (correctness) (assertion batch 1),Passed,00:00:00.0644776,2791,0
-EqualityRelations (correctness) (assertion batch 5),Passed,00:00:00.0591242,4457,0
-EqualityRelations (correctness) (assertion batch 3),Passed,00:00:00.0539807,4173,0
-ObjectIsIsIdentity (correctness),Passed,00:00:00.0506549,19651,0
-EqualityRelations (correctness) (assertion batch 6),Passed,00:00:00.0497746,4477,0
-MinMaxZeros (correctness) (assertion batch 2),Passed,00:00:00.0486478,4241,0
-MinMaxZeros (correctness) (assertion batch 3),Passed,00:00:00.0476570,5431,0
-SameValueZeroEquivalence (correctness) (assertion batch 3),Passed,00:00:00.0452510,6913,0
-ZeroSigns (correctness) (assertion batch 4),Passed,00:00:00.0449332,6544,0
-ZeroSigns (correctness) (assertion batch 1),Passed,00:00:00.0430799,8243,0
-SameValueZeroEquivalence (correctness) (assertion batch 1),Passed,00:00:00.0355298,3354,0
-ZeroSigns (correctness) (assertion batch 2),Passed,00:00:00.0259307,15361,0
-ReciprocalOfZeros (correctness) (assertion batch 2),Passed,00:00:00.0167629,3481,0
-MinMaxZeros (correctness) (assertion batch 1),Passed,00:00:00.0160565,3927,0
-SameValueZeroEquivalence (correctness) (assertion batch 2),Passed,00:00:00.0139935,7283,0
-ZeroSigns (correctness) (assertion batch 3),Passed,00:00:00.0115172,5854,0
-ReciprocalOfZeros (correctness) (assertion batch 3),Passed,00:00:00.0059305,5330,0
+NormKeyCollapses (correctness),Failed,00:00:30.0061161,59864139,0
+AddZeroNormalizes (correctness),Passed,00:00:00.0696413,475650,0
+ReciprocalOfZeros (correctness) (assertion batch 1),Passed,00:00:00.0627130,3243,0
+ReciprocalOfZeros (correctness) (assertion batch 3),Passed,00:00:00.0626969,5330,0
+ReciprocalOfZeros (correctness) (assertion batch 2),Passed,00:00:00.0626564,3481,0
+MinMaxZeros (correctness) (assertion batch 1),Passed,00:00:00.0407584,3927,0
+MinMaxZeros (correctness) (assertion batch 2),Passed,00:00:00.0406743,4241,0
+ObjectIsIsIdentity (correctness),Passed,00:00:00.0273496,42648,0
+EqualityRelations (correctness) (assertion batch 5),Passed,00:00:00.0222375,4457,0
+EqualityRelations (correctness) (assertion batch 4),Passed,00:00:00.0209259,5540,0
+SameValueZeroEquivalence (correctness) (assertion batch 3),Passed,00:00:00.0177533,6913,0
+ZeroSigns (correctness) (assertion batch 2),Passed,00:00:00.0151757,15361,0
+ZeroSigns (correctness) (assertion batch 1),Passed,00:00:00.0100178,8243,0
+ZeroSigns (correctness) (assertion batch 3),Passed,00:00:00.0088949,5854,0
+SameValueZeroEquivalence (correctness) (assertion batch 2),Passed,00:00:00.0088790,7283,0
+EqualityRelations (correctness) (assertion batch 3),Passed,00:00:00.0087776,4173,0
+MinMaxZeros (correctness) (assertion batch 3),Passed,00:00:00.0084723,5431,0
+ZeroSigns (correctness) (assertion batch 4),Passed,00:00:00.0071747,6544,0
+EqualityRelations (correctness) (assertion batch 2),Passed,00:00:00.0070622,4115,0
+EqualityRelations (correctness) (assertion batch 1),Passed,00:00:00.0068122,2791,0
+EqualityRelations (correctness) (assertion batch 6),Passed,00:00:00.0065073,4477,0
+SameValueZeroEquivalence (correctness) (assertion batch 1),Passed,00:00:00.0059779,3354,0

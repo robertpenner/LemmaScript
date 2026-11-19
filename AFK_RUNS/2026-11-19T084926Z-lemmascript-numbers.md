@@ -1,6 +1,6 @@
 # AFK Run: LemmaScript JavaScript number support, first chain (#14 parent, #15 to #18)
 
-**Status:** active
+**Status:** completed
 
 **Branch:** one worktree and branch per ticket, siblings of `LemmaScript/`; this log lives on `afk/numbers-1-log`, kept out of the ticket PRs.
 
@@ -65,3 +65,13 @@ No actionable findings remain open. Maintainer decisions left open: header integ
 ### Recovery
 
 Not resumed.
+
+### Completion
+
+PRs #24, #25, #26, and #27 marked ready for review. One `gh pr checks` poll per PR after CI finished: 41 of 41 checks pass on each final head (`b4be40d`, `a163370`, `72a781a`, `52af011`).
+
+Final verification command: `verify.sh` per worktree (typecheck, typecheck:examples, build, regen diffs, `./tools/test-fixtures.sh`), with results listed under Verification evidence.
+
+Elapsed duration: 4 h 37 min, from `Started:` to the `cee08d0` log commit at 2026-11-19T13:26:20Z.
+
+**Result:** All four tickets (#15, #16, #17, #18) are implemented, reviewed, and verified on separate fork PRs, with hosted CI green. No upstream PRs were opened; that awaits the user's confirmation. #18 stays open for the header-integrity decision.

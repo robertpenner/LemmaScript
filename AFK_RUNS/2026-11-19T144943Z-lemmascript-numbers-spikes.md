@@ -8,6 +8,8 @@
 
 **Started:** 2026-11-19 14:49:43 UTC
 
+**Duration:** 4 h 39 m 21 s, measured to run-log commit `4c768b2` (2026-11-19T19:29:04Z).
+
 **Goal:** Produce the evidence two #14 research tickets ask for: a backend-neutral `Math.*` semantics table with Node vectors and Lean divergence examples (#23), and a Dafny number-encoding spike answering `DESIGN_NUMBERS.md` §5 Questions 1 to 6 (#20).
 
 **Execution:** parallel, 2 workers. Advisor and per-ticket reviewer: `gemini-4-carbon`.
@@ -100,7 +102,7 @@ Carbon review of `8ac8174` (`gemini-4-carbon`): confirmed every per-file count, 
 
 ### Final verification
 
-- #23 at `599ee04`: `node spikes/math-semantics/gen.mjs --check` exit 0 (coordinator rerun in ws-05).
+- #23 at `599ee04`: `node spikes/math-semantics/vectors/gen.mjs --check` exit 0, "matches (1487 records)" (coordinator rerun in ws-05).
 - #20 at `6005100`: `DAFNY_FP=<nightly dafny> ./run.sh` exit 0 with the vendored vectors (worker run; coordinator rerun of `8ac8174` also exit 0).
 - `gh pr checks 28` and `gh pr checks 29` (heads `599ee04`, `6005100`): 41 pass, 0 fail, 0 pending each.
 - Pre-existing failures: none observed.

@@ -18,14 +18,14 @@
 
 | Issue | Slice                           | Status      | Blocked by / reason | Integration commit | Verification |
 | ----- | ------------------------------- | ----------- | ------------------- | ------------------ | ------------ |
-| #23   | `Math.*` semantics table        | in progress |                     |                    |              |
+| #23   | `Math.*` semantics table        | worker done, in review |               | `1562258` (unpushed) | gen `--check`, Lean compile, Dafny fixtures rerun by coordinator |
 | #20   | Dafny number-encoding spike     | in progress |                     |                    |              |
 
 ### Parallel workers
 
 | Ticket | Checkout            | Branch                         | Starting verified SHA | Allowed files                     | Worker state |
 | ------ | ------------------- | ------------------------------ | --------------------- | --------------------------------- | ------------ |
-| #23    | `LemmaScript-ws-05` | `spike/math-semantics-table`   | `60cab87`             | new files in `spikes/math-semantics/` | running |
+| #23    | `LemmaScript-ws-05` | `spike/math-semantics-table`   | `60cab87`             | new files in `spikes/math-semantics/` | returned `1562258` (41 files, all under `spikes/math-semantics/`) |
 | #20    | `LemmaScript-ws-06` | `spike/dafny-number-encodings` | `60cab87`             | new files in `spikes/dafny-number-encodings/` | running |
 
 Briefs: [#23](https://github.com/robertpenner/LemmaScript/issues/23#issuecomment-7012742197), [#20](https://github.com/robertpenner/LemmaScript/issues/20#issuecomment-7012742694).
@@ -38,9 +38,18 @@ Briefs: [#23](https://github.com/robertpenner/LemmaScript/issues/23#issuecomment
 
 ### Verification evidence
 
-Pending.
+#23 at `1562258`, rerun by the coordinator in ws-05:
+
+- `node spikes/math-semantics/vectors/gen.mjs --check`: exit 0, "matches (1405 records)".
+- `lake env lean spikes/math-semantics/lean/Divergences.lean`: exit 0; output is only `#check` and `#eval` results, no warnings, errors, or `sorry`. The worker reported "no output", which was inaccurate.
+- `git diff --name-only 60cab87..1562258`: every path is under `spikes/math-semantics/`.
+- `node spikes/math-semantics/fixtures/run-dafny-gen.mjs <scratch>`: 36 fixtures, 12 emitted. `dafny verify` (4.11.0): 10 exit 0 (`absInt` 1 verified; the other 9 have no contracts, 0 verified), `expOpInt` and `expOpReal` exit 2 with 1 parse error each.
+- `cd tools && npm test`: not runnable, `tools/package.json` has no `test` script. Root `npm run typecheck` exit 0 (worker-reported).
+
+#20: pending.
 
 ### Decisions
 
+- Finding from #23: `lsc gen` emits `x ** y` unchanged and Dafny rejects the output with a parse error, although `SPEC.md` says `**` has no lowering. Candidate fork issue after the run.
 - Spike artifacts go under `spikes/<topic>/` with no edits to tracked files.
 - #20's report answers the six questions in `DESIGN_NUMBERS.md` §5 verbatim, then maps the issue's own six topics onto them, because the two lists differ.

@@ -802,15 +802,17 @@ function mathMinMaxTy(tys: Ty[]): Ty {
 
 /** Element types reached by a Math.max/min spread argument: the
  *  `arrayConcat` tree built by extract, with array-literal segments for
- *  positional arguments. Returns [] if a segment's type is unknown. */
-function spreadLeafTys(e: TExpr): Ty[] {
+ *  positional arguments. `complete` is false when some segment's type is
+ *  unknown; `tys` still lists every known leaf. An empty literal segment
+ *  contributes no leaves and is complete. */
+function spreadLeafTys(e: TExpr): { tys: Ty[]; complete: boolean } {
   if (e.kind === "binop" && e.op === "arrayConcat") {
     const l = spreadLeafTys(e.left), r = spreadLeafTys(e.right);
-    return l.length > 0 && r.length > 0 ? [...l, ...r] : [];
+    return { tys: [...l.tys, ...r.tys], complete: l.complete && r.complete };
   }
-  if (e.kind === "arrayLiteral") return e.elems.map(x => x.ty);
-  if (e.ty.kind === "array") return [e.ty.elem];
-  return [];
+  if (e.kind === "arrayLiteral") return { tys: e.elems.map(x => x.ty), complete: true };
+  if (e.ty.kind === "array") return { tys: [e.ty.elem], complete: true };
+  return { tys: [], complete: false };
 }
 
 function inferMethodReturnTy(fn: TExpr, args: TExpr[], ctx: Ctx): Ty {
@@ -1164,12 +1166,12 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       // MaxOfSeq/MinOfSeq: extract's rewrite of Math.max/min with spread arguments.
       if (ty.kind === "unknown" && fn.kind === "var" && (fn.name === "MaxOfSeq" || fn.name === "MinOfSeq") &&
           args.length === 1 && !binding(ctx.env, fn.name) && !ctx.fnReturns.has(fn.name)) {
-        const leaves = spreadLeafTys(args[0]);
+        const { tys: leaves, complete } = spreadLeafTys(args[0]);
         if (leaves.some(isBigInt))
           throw new Error(`Math.${fn.name === "MaxOfSeq" ? "max" : "min"} does not accept bigint arguments (JavaScript throws a TypeError)`);
         // The MaxOfSeq/MinOfSeq helpers return int, so integral spreads are int (never nat).
-        if (leaves.some(t => t.kind === "real")) ty = { kind: "real" };
-        else if (leaves.length > 0 && leaves.every(t => t.kind === "int" || t.kind === "nat")) ty = { kind: "int" };
+        if (complete && leaves.some(t => t.kind === "real")) ty = { kind: "real" };
+        else if (complete && leaves.length > 0 && leaves.every(t => t.kind === "int" || t.kind === "nat")) ty = { kind: "int" };
       }
       // Call through a function-typed value: its fn type carries the result
       if (ty.kind === "unknown" && fn.ty.kind === "fn") ty = fn.ty.result;

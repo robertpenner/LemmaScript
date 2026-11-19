@@ -117,3 +117,29 @@ test("Lean still rejects real Math arithmetic", () => {
     emitLeanFile({ ...defFile, decls: [...(typesFile?.decls ?? []), ...defFile.decls] });
   }, /real arithmetic is not supported by the Lean backend/);
 });
+
+test("an empty spread segment keeps the real result type of Math.max/min", () => {
+  const output = emitSource(`
+export function hi(t: number): number {
+  //@ type t real
+  //@ type \\result real
+  return Math.max(...[], t);
+}
+export function lo(t: number): number {
+  //@ type t real
+  //@ type \\result real
+  return Math.min(t, ...[]);
+}
+`);
+  assert.match(output, /MaxOfSeqReal\(/);
+  assert.match(output, /MinOfSeqReal\(/);
+});
+
+test("an empty spread segment does not hide a bigint Math.max argument", () => {
+  assert.throws(() => emitSource(`
+export function f(): number { return Math.max(...([] as number[]), 1n as any); }
+`), /does not accept bigint arguments/);
+  assert.throws(() => emitSource(`
+export function f(b: bigint): number { return Math.max(...[], b as any); }
+`), /does not accept bigint arguments/);
+});

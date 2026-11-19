@@ -4,7 +4,7 @@
 
 **Branch:** one worktree and spike branch per ticket, siblings of `LemmaScript/`; this log lives on `afk/numbers-2-log`. Spike branches never merge into fork `main`.
 
-**Pull request:** not opened yet.
+**Pull requests:** #23 in fork draft PR #28 (spike, not for merge); #20 not opened yet.
 
 **Started:** 2026-11-19 14:49:43 UTC
 
@@ -18,14 +18,14 @@
 
 | Issue | Slice                           | Status      | Blocked by / reason | Integration commit | Verification |
 | ----- | ------------------------------- | ----------- | ------------------- | ------------------ | ------------ |
-| #23   | `Math.*` semantics table        | worker done, in review |               | `1562258` (unpushed) | gen `--check`, Lean compile, Dafny fixtures rerun by coordinator |
+| #23   | `Math.*` semantics table        | verified, draft PR #28 |              | `599ee04` (pushed) | gen `--check`, Lean compile, Dafny fixtures rerun by coordinator; Carbon review resolved |
 | #20   | Dafny number-encoding spike     | in progress |                     |                    |              |
 
 ### Parallel workers
 
 | Ticket | Checkout            | Branch                         | Starting verified SHA | Allowed files                     | Worker state |
 | ------ | ------------------- | ------------------------------ | --------------------- | --------------------------------- | ------------ |
-| #23    | `LemmaScript-ws-05` | `spike/math-semantics-table`   | `60cab87`             | new files in `spikes/math-semantics/` | returned `1562258` (41 files, all under `spikes/math-semantics/`) |
+| #23    | `LemmaScript-ws-05` | `spike/math-semantics-table`   | `60cab87`             | new files in `spikes/math-semantics/` | done: `1562258`, review fixes `599ee04`; all files under `spikes/math-semantics/` |
 | #20    | `LemmaScript-ws-06` | `spike/dafny-number-encodings` | `60cab87`             | new files in `spikes/dafny-number-encodings/` | running |
 
 Briefs: [#23](https://github.com/robertpenner/LemmaScript/issues/23#issuecomment-7012742197), [#20](https://github.com/robertpenner/LemmaScript/issues/20#issuecomment-7012742694).
@@ -46,10 +46,28 @@ Briefs: [#23](https://github.com/robertpenner/LemmaScript/issues/23#issuecomment
 - `node spikes/math-semantics/fixtures/run-dafny-gen.mjs <scratch>`: 36 fixtures, 12 emitted. `dafny verify` (4.11.0): 10 exit 0 (`absInt` 1 verified; the other 9 have no contracts, 0 verified), `expOpInt` and `expOpReal` exit 2 with 1 parse error each.
 - `cd tools && npm test`: not runnable, `tools/package.json` has no `test` script. Root `npm run typecheck` exit 0 (worker-reported).
 
+#23 at `599ee04` (review fixes, 8 files, +253/-59), rerun by the coordinator in ws-05:
+
+- `git diff --name-only 60cab87..599ee04`: every path is under `spikes/math-semantics/`.
+- `node spikes/math-semantics/vectors/gen.mjs --check`: exit 0, "matches (1487 records)": 1014 exact, 473 approximated, no duplicate member and input tuples.
+- `lake env lean spikes/math-semantics/lean/Divergences.lean`: exit 0, no warning, error, or `sorry` lines.
+- New fixtures under `dafny verify` (4.11.0): `floorDivInt` 2 verified; `floorDivIntUnguarded` 1 error (precondition); `minSpreadInt` 1 error; `maxSpreadIntGuarded` 4 verified; `min3Int` rejected by `lsc gen`.
+- `atan2(5e-324, 2)` record: result 0, class `approximated`.
+
+Carbon review of `1562258` (`gemini-4-carbon`): confirmed clause ids, quotes, the 12/14 exact/approximated split, Lean line numbers and opaque/def claims, all vector records, and deterministic `--check`. Six findings, all fixed in `599ee04`:
+
+1. "Verifies" wording for contract-free fixtures overstated the evidence; reworded to "0 verified, 0 errors".
+2. The `atan2` classifier used the output `r === 0`; it now classifies by input, with subnormal pairs added.
+3. Variadic `min`, `max`, and `hypot` vectors were missing; added.
+4. The Dafny column omitted `JSFloorDiv`, the arity-2 limit, and `MinOfSeq`/`MaxOfSeq`; added with fixtures.
+5. `pow`, `sign`, and `abs` special cases were incomplete; completed.
+6. 16 duplicate vectors; removed.
+
 #20: pending.
 
 ### Decisions
 
 - Finding from #23: `lsc gen` emits `x ** y` unchanged and Dafny rejects the output with a parse error, although `SPEC.md` says `**` has no lowering. Candidate fork issue after the run.
+- Finding from #23 review: `Math.floor(a / b)` lowers to `JSFloorDiv`, which matches JavaScript only while the quotient is exactly representable; `Math.floor(2 ** 60 / 3)` is 384307168202282304 in Node, the integer floor is 384307168202282325.
 - Spike artifacts go under `spikes/<topic>/` with no edits to tracked files.
 - #20's report answers the six questions in `DESIGN_NUMBERS.md` §5 verbatim, then maps the issue's own six topics onto them, because the two lists differ.

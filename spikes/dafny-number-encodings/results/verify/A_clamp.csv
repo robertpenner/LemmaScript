@@ -1,0 +1,15 @@
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+Clamp (well-formedness) (assertion batch 1),Passed,00:00:00.9025632,5486,0
+Clamp (well-formedness) (assertion batch 4),Passed,00:00:00.2902276,5508,0
+Clamp (well-formedness) (assertion batch 2),Passed,00:00:00.2355632,5764,0
+Clamp (well-formedness) (assertion batch 8),Passed,00:00:00.2220276,5740,0
+Clamp (well-formedness) (assertion batch 9),Passed,00:00:00.1978876,4659,0
+Clamp (well-formedness) (assertion batch 3),Passed,00:00:00.1869566,4919,0
+Clamp (well-formedness) (assertion batch 7),Passed,00:00:00.1722470,4890,0
+ClampIsMinMax (well-formedness),Passed,00:00:00.1667773,3488,0
+Clamp (well-formedness) (assertion batch 6),Passed,00:00:00.1551928,4661,0
+ClampIsMinMax (correctness),Passed,00:00:00.1161242,8086,0
+GuardFormsAgree (well-formedness),Passed,00:00:00.0953788,3488,0
+Clamp (well-formedness) (assertion batch 5),Passed,00:00:00.0951715,5578,0
+GuardFormsAgree (correctness),Passed,00:00:00.0476042,6083,0
+CompareBySub (well-formedness),Passed,00:00:00.0144636,5513,0

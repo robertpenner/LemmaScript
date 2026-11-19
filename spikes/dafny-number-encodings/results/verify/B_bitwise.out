@@ -1,0 +1,14 @@
+CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/B_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/B_bitwise.dfy(65,37): Error: Verification of 'AndExample' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+65 |   ensures And(Lit(-1.0), Lit(255.0)) == Lit(255.0)
+   |                                      ^^
+
+corpus/B_bitwise.dfy(72,31): Error: Verification of 'UshrExample' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+72 |   ensures UshrN(Lit(-1.0), 28) == Lit(15.0)
+   |                                ^^
+
+
+Dafny program verifier finished with 42 verified, 0 errors, 2 time outs
+Results File: /Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/results/verify/B_bitwise.csv

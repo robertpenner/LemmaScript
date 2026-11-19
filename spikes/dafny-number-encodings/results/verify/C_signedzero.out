@@ -1,0 +1,9 @@
+CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/C_signedzero.dfy(50,30): Error: Verification of 'NormKeyCollapses' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+50 |   ensures SameValueZero(x, y) <==> ObjectIs(NormKey(x), NormKey(y))
+   |                               ^^^^
+
+
+Dafny program verifier finished with 21 verified, 0 errors, 1 time out
+Results File: /Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/results/verify/C_signedzero.csv

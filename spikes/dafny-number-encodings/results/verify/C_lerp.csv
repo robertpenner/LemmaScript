@@ -1,0 +1,25 @@
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+BridgeRoundTrip (correctness) (assertion batch 1),Failed,00:00:30.1069786,37075414,0
+LerpEndpointsSmallInts (correctness) (assertion batch 1),Failed,00:00:30.0445406,37068469,0
+LerpEndpointsSmallInts (correctness) (assertion batch 2),Failed,00:00:30.0365725,57496932,0
+BridgeAdd (correctness) (assertion batch 1),Failed,00:00:30.0247519,101780141,0
+LerpAtOneOvershoots (correctness) (assertion batch 1),Failed,00:00:30.0205752,37624437,0
+BridgeRoundTrip (correctness) (assertion batch 2),Failed,00:00:30.0137782,34694837,0
+BridgeAdd (correctness) (assertion batch 2),Failed,00:00:03.5897423,9875203,0
+LerpExtremesIsNaN (correctness) (assertion batch 2),Passed,00:00:01.9119604,4061138,0
+LerpExtremesIsNaN (correctness) (assertion batch 1),Passed,00:00:00.8422469,1689304,0
+BridgeAdd (well-formedness) (assertion batch 2),Passed,00:00:00.1348069,18250,0
+BridgeAdd (well-formedness) (assertion batch 1),Passed,00:00:00.0972850,18171,0
+BridgeAdd (well-formedness) (assertion batch 6),Passed,00:00:00.0560775,4956,0
+BridgeAdd (well-formedness) (assertion batch 3),Passed,00:00:00.0460727,18871,0
+LerpAtOneOvershoots (correctness) (assertion batch 2),Passed,00:00:00.0419582,4509,0
+LerpEndpointsSmallInts (well-formedness) (assertion batch 2),Passed,00:00:00.0310213,7121,0
+LerpEndpointsSmallInts (well-formedness) (assertion batch 1),Passed,00:00:00.0298265,3326,0
+BridgeAdd (well-formedness) (assertion batch 5),Passed,00:00:00.0247543,5490,0
+IsSafeIntR (well-formedness) (assertion batch 4),Passed,00:00:00.0245009,3765,0
+BridgeAdd (well-formedness) (assertion batch 4),Passed,00:00:00.0173825,5480,0
+IsSafeIntR (well-formedness) (assertion batch 3),Passed,00:00:00.0106798,3231,0
+BridgeRoundTrip (well-formedness),Passed,00:00:00.0103313,3565,0
+BridgeAdd (well-formedness) (assertion batch 7),Passed,00:00:00.0098449,4958,0
+IsSafeIntR (well-formedness) (assertion batch 1),Passed,00:00:00.0096391,2710,0
+IsSafeIntR (well-formedness) (assertion batch 2),Passed,00:00:00.0052921,2712,0

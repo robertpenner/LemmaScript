@@ -1,0 +1,18 @@
+CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/A_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/A_bitwise.dfy(66,6): Error: Verification of 'AndWithSelf' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+66 | lemma AndWithSelf(a: SafeInt) // @lemma
+   |       ^^^^^^^^^^^
+
+corpus/A_bitwise.dfy(76,6): Error: Verification of 'Bv32RoundTrip' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+76 | lemma Bv32RoundTrip(x: int) // @lemma
+   |       ^^^^^^^^^^^^^
+
+corpus/A_bitwise.dfy(82,7): Error: Verification of 'Examples' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+82 | method Examples()
+   |        ^^^^^^^^
+
+
+Dafny program verifier finished with 11 verified, 0 errors, 3 time outs

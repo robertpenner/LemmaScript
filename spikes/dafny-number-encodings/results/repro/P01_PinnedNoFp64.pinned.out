@@ -1,0 +1,6 @@
+repro/P01_PinnedNoFp64.dfy(5,9): Error: Type or type parameter is not declared in this scope: fp64 (did you forget to qualify a name or declare a module import 'opened'?) (note that names in outer modules are not visible in contained modules)
+  |
+5 |   var x: fp64 := 1.0;
+  |          ^^^^
+
+1 resolution/type errors detected in P01_PinnedNoFp64.dfy

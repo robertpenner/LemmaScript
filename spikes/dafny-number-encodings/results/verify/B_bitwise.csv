@@ -1,0 +1,45 @@
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+AndExample (correctness) (assertion batch 6),Failed,00:00:30.0899093,16742094,0
+UshrExample (correctness) (assertion batch 7),Failed,00:00:30.0357012,8708877,0
+Imul (well-formedness) (assertion batch 2),Passed,00:00:00.3803805,8127,0
+Ushr0 (well-formedness),Passed,00:00:00.3802325,8292,0
+Imul (well-formedness) (assertion batch 1),Passed,00:00:00.3798375,8322,0
+Imul (well-formedness) (assertion batch 3),Passed,00:00:00.1684891,10487,0
+OrZeroRange (correctness) (assertion batch 2),Passed,00:00:00.1042555,15390,0
+Ushr0Examples (correctness),Passed,00:00:00.1002583,20599,0
+ImulExamples (correctness) (assertion batch 2),Passed,00:00:00.0992230,159810,0
+UshrN (well-formedness) (assertion batch 3),Passed,00:00:00.0922180,11107,0
+And (well-formedness) (assertion batch 1),Passed,00:00:00.0917638,8322,0
+OrZeroSpecials (correctness) (assertion batch 2),Passed,00:00:00.0867386,15346,0
+OrZeroIdempotent (correctness) (assertion batch 2),Passed,00:00:00.0780638,91458,0
+And (well-formedness) (assertion batch 4),Passed,00:00:00.0770068,11638,0
+ImulExamples (correctness) (assertion batch 1),Passed,00:00:00.0750527,85238,0
+AndExample (correctness) (assertion batch 1),Passed,00:00:00.0737101,9090,0
+OrZeroRange (well-formedness) (assertion batch 2),Passed,00:00:00.0713608,12695,0
+OrZeroSpecials (correctness) (assertion batch 3),Passed,00:00:00.0683475,22099,0
+UshrN (well-formedness) (assertion batch 2),Passed,00:00:00.0653840,11225,0
+AndExample (correctness) (assertion batch 2),Passed,00:00:00.0635906,16987,0
+AndExample (correctness) (assertion batch 4),Passed,00:00:00.0586215,12550,0
+OrZeroRange (correctness) (assertion batch 1),Passed,00:00:00.0569865,13610,0
+OrZeroSpecials (correctness) (assertion batch 4),Passed,00:00:00.0547622,24178,0
+OrZeroRange (correctness) (assertion batch 3),Passed,00:00:00.0543662,15693,0
+OrZeroSpecials (correctness) (assertion batch 5),Passed,00:00:00.0534676,29080,0
+OrZeroSpecials (well-formedness) (assertion batch 1),Passed,00:00:00.0519085,6779,0
+AndExample (correctness) (assertion batch 5),Passed,00:00:00.0506935,12487,0
+And (well-formedness) (assertion batch 2),Passed,00:00:00.0500096,11177,0
+UshrExample (well-formedness) (assertion batch 1),Passed,00:00:00.0491522,9385,0
+UshrExample (well-formedness) (assertion batch 2),Passed,00:00:00.0488917,9467,0
+OrZeroRange (well-formedness) (assertion batch 1),Passed,00:00:00.0471709,12649,0
+UshrExample (correctness) (assertion batch 2),Passed,00:00:00.0470475,16987,0
+OrZeroSpecials (correctness) (assertion batch 1),Passed,00:00:00.0435919,14316,0
+UshrN (well-formedness) (assertion batch 1),Passed,00:00:00.0411830,8418,0
+AndExample (correctness) (assertion batch 3),Passed,00:00:00.0411815,12039,0
+And (well-formedness) (assertion batch 3),Passed,00:00:00.0408158,10323,0
+UshrExample (correctness) (assertion batch 1),Passed,00:00:00.0406324,9090,0
+UshrN (well-formedness) (assertion batch 4),Passed,00:00:00.0392340,31064,0
+OrZeroSpecials (well-formedness) (assertion batch 2),Passed,00:00:00.0365131,15337,0
+OrZeroIdempotent (correctness) (assertion batch 1),Passed,00:00:00.0310479,14640,0
+UshrExample (correctness) (assertion batch 5),Passed,00:00:00.0265607,10802,0
+UshrExample (correctness) (assertion batch 4),Passed,00:00:00.0226264,12550,0
+UshrExample (correctness) (assertion batch 6),Passed,00:00:00.0201547,12481,0
+UshrExample (correctness) (assertion batch 3),Passed,00:00:00.0149840,12039,0

@@ -1,0 +1,8 @@
+CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/B_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/B_lerp.dfy(49,20): Error: assertion might not hold
+   |
+49 |   assert 0.0 <= m.r <= d.r; // @manual
+   |                     ^^
+
+
+Dafny program verifier finished with 15 verified, 1 error

@@ -1,0 +1,144 @@
+CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/C_safeint.dfy(12,20): Error: Verification of 'Midpoint' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+12 |   ensures IsSafeIntF(m)
+   |                     ^
+
+corpus/C_safeint.dfy(12,20): Error: Verification of 'Midpoint' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+12 |   ensures IsSafeIntF(m)
+   |                     ^
+
+corpus/C_safeint.dfy(12,20): Error: Verification of 'Midpoint' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+12 |   ensures IsSafeIntF(m)
+   |                     ^
+
+corpus/C_safeint.dfy(13,26): Error: Verification of 'Midpoint' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+13 |   ensures fp64.LessOrEqual(lo, m) && fp64.LessOrEqual(m, hi)
+   |                           ^
+
+corpus/C_safeint.dfy(13,53): Error: Verification of 'Midpoint' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+13 |   ensures fp64.LessOrEqual(lo, m) && fp64.LessOrEqual(m, hi)
+   |                                                      ^
+
+corpus/C_safeint.dfy(14,41): Error: Verification of 'Midpoint' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+14 |   ensures fp64.Less(lo, hi) ==> fp64.Less(m, hi)
+   |                                          ^
+
+corpus/C_safeint.dfy(25,31): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+25 |   ensures 0 <= idx ==> StrictEq(a[idx], key)
+   |                                ^
+
+corpus/C_safeint.dfy(29,2): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+29 |   assert hi as int == |a|; // @manual
+   |   ^^^^^^
+
+corpus/C_safeint.dfy(29,12): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+29 |   assert hi as int == |a|; // @manual
+   |             ^^
+
+corpus/C_safeint.dfy(30,2): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+30 |   while Lt(lo, hi)
+   |   ^^^^^
+
+corpus/C_safeint.dfy(31,24): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+31 |     invariant IsSafeIntF(lo) && IsSafeIntF(hi)
+   |                         ^
+
+corpus/C_safeint.dfy(31,24): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+31 |     invariant IsSafeIntF(lo) && IsSafeIntF(hi)
+   |                         ^
+
+corpus/C_safeint.dfy(31,24): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+31 |     invariant IsSafeIntF(lo) && IsSafeIntF(hi)
+   |                         ^
+
+corpus/C_safeint.dfy(31,42): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+31 |     invariant IsSafeIntF(lo) && IsSafeIntF(hi)
+   |                                           ^
+
+corpus/C_safeint.dfy(31,42): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+31 |     invariant IsSafeIntF(lo) && IsSafeIntF(hi)
+   |                                           ^
+
+corpus/C_safeint.dfy(32,30): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+32 |     invariant fp64.LessOrEqual(0.0, lo) && fp64.LessOrEqual(lo, hi)
+   |                               ^
+
+corpus/C_safeint.dfy(32,59): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+32 |     invariant fp64.LessOrEqual(0.0, lo) && fp64.LessOrEqual(lo, hi)
+   |                                                            ^
+
+corpus/C_safeint.dfy(32,59): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+32 |     invariant fp64.LessOrEqual(0.0, lo) && fp64.LessOrEqual(lo, hi)
+   |                                                            ^
+
+corpus/C_safeint.dfy(33,17): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+33 |     invariant hi as int <= |a|
+   |                  ^^
+
+corpus/C_safeint.dfy(34,24): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+34 |     decreases hi as int - lo as int
+   |                         ^
+
+corpus/C_safeint.dfy(34,29): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+34 |     decreases hi as int - lo as int
+   |                              ^^
+
+corpus/C_safeint.dfy(37,17): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+37 |     var k := mid as int;
+   |                  ^^
+
+corpus/C_safeint.dfy(38,11): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+38 |     if Lt(a[k], key) {
+   |            ^
+
+corpus/C_safeint.dfy(56,22): Error: Verification of 'SumBounded' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+56 |   ensures (s as real) <= (|a| as real) * (bound as real)
+   |                       ^^
+
+corpus/C_safeint.dfy(62,24): Error: Verification of 'SumBounded' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+62 |     invariant IsSafeIntF(s) && fp64.LessOrEqual(0.0, s)
+   |                         ^
+
+corpus/C_safeint.dfy(62,24): Error: Verification of 'SumBounded' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+62 |     invariant IsSafeIntF(s) && fp64.LessOrEqual(0.0, s)
+   |                         ^
+
+corpus/C_safeint.dfy(62,24): Error: Verification of 'SumBounded' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+62 |     invariant IsSafeIntF(s) && fp64.LessOrEqual(0.0, s)
+   |                         ^
+
+corpus/C_safeint.dfy(63,26): Error: Verification of 'SumBounded' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+63 |     invariant (s as real) <= (i as real) * (bound as real)
+   |                           ^^
+
+
+Dafny program verifier finished with 59 verified, 0 errors, 28 time outs
+Results File: /Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/results/verify/C_safeint.csv

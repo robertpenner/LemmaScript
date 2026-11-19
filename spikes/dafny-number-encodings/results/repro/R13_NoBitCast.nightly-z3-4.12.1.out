@@ -1,0 +1,11 @@
+repro/R13_NoBitCast.dfy(8,9): Error: type conversion to a bitvector-based type is allowed only from numeric and bitvector types, char, and ORDINAL (got fp64)
+  |
+8 |   b := x as bv64;
+  |          ^^
+
+repro/R13_NoBitCast.dfy(13,9): Error: type conversion to fp64 is allowed only from numeric types (int, real, fp32, fp64) (got bv64)
+   |
+13 |   x := b as fp64;
+   |          ^^
+
+2 resolution/type errors detected in R13_NoBitCast.dfy

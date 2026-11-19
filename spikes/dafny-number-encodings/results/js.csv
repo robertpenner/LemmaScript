@@ -1,0 +1,6 @@
+program,toolchain,build_exit,run_exit
+A_main,pinned,0,0
+B_main,pinned,0,0
+C_main,nightly,1,-
+C_min,nightly,0,1
+C_nan,nightly,1,-

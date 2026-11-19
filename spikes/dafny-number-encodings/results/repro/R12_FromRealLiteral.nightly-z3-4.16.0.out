@@ -1,0 +1,12 @@
+repro/R12_FromRealLiteral.dfy(4,48): Error: Verification of 'FromRealZero' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+  |
+4 | lemma FromRealZero() ensures fp64.FromReal(0.0) == 0.0 {}
+  |                                                 ^^
+
+repro/R12_FromRealLiteral.dfy(5,47): Error: Verification of 'FromRealOne' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+  |
+5 | lemma FromRealOne() ensures fp64.FromReal(1.0) == 1.0 {}
+  |                                                ^^
+
+
+Dafny program verifier finished with 3 verified, 0 errors, 2 time outs

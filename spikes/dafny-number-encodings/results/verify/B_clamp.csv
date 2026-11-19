@@ -1,0 +1,28 @@
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+NaNSeparatesGuards (well-formedness) (assertion batch 1),Passed,00:00:00.1777053,6779,0
+NaNSeparatesGuards (well-formedness) (assertion batch 2),Passed,00:00:00.1744159,14745,0
+ClampNegInRange (correctness) (assertion batch 3),Passed,00:00:00.1537882,23667,0
+ClampInRange (correctness) (assertion batch 3),Passed,00:00:00.1522619,17104,0
+NaNSeparatesGuards (correctness) (assertion batch 3),Passed,00:00:00.1268828,31141,0
+ClampInRange (correctness) (assertion batch 2),Passed,00:00:00.1241831,17592,0
+ClampInRange (correctness) (assertion batch 1),Passed,00:00:00.1220902,16277,0
+ClampNegInRange (well-formedness) (assertion batch 1),Passed,00:00:00.1202456,7544,0
+NaNSeparatesGuards (well-formedness) (assertion batch 3),Passed,00:00:00.1196445,20677,0
+ClampNegInRange (correctness) (assertion batch 2),Passed,00:00:00.1192186,23269,0
+GuardsAgreeOffNaN (correctness),Passed,00:00:00.1085532,54674,0
+ClampInRange (well-formedness) (assertion batch 1),Passed,00:00:00.1021829,7544,0
+ClampNegInRange (well-formedness) (assertion batch 3),Passed,00:00:00.0913484,18039,0
+ClampNegInRange (well-formedness) (assertion batch 6),Passed,00:00:00.0900758,18086,0
+ClampNegInRange (well-formedness) (assertion batch 4),Passed,00:00:00.0776389,18732,0
+ClampKeepsNegZero (correctness) (assertion batch 1),Passed,00:00:00.0748407,18800,0
+ClampNegInRange (well-formedness) (assertion batch 2),Passed,00:00:00.0722001,7546,0
+ClampInRange (well-formedness) (assertion batch 2),Passed,00:00:00.0711162,7546,0
+NaNSeparatesGuards (correctness) (assertion batch 1),Passed,00:00:00.0677889,18449,0
+ClampInRange (well-formedness) (assertion batch 4),Passed,00:00:00.0661492,13580,0
+ClampInRange (well-formedness) (assertion batch 3),Passed,00:00:00.0659979,12854,0
+ClampInRange (well-formedness) (assertion batch 5),Passed,00:00:00.0628172,12898,0
+NaNSeparatesGuards (correctness) (assertion batch 2),Passed,00:00:00.0573552,31209,0
+ClampNegInRange (correctness) (assertion batch 1),Passed,00:00:00.0538222,24987,0
+ClampKeepsNegZero (correctness) (assertion batch 2),Passed,00:00:00.0531331,33065,0
+ClampNegInRange (well-formedness) (assertion batch 5),Passed,00:00:00.0429894,18083,0
+ClampInRange (well-formedness) (assertion batch 6),Passed,00:00:00.0429289,12898,0

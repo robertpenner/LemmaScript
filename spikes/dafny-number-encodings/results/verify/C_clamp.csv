@@ -1,0 +1,13 @@
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+ClampInRange (correctness) (assertion batch 2),Failed,00:00:30.1030850,69685086,0
+ClampInRange (correctness) (assertion batch 3),Failed,00:00:30.0213677,188549296,0
+ClampNegInRange (correctness) (assertion batch 2),Failed,00:00:30.0150965,83373933,0
+GuardsAgreeOffNaN (correctness),Failed,00:00:30.0075488,158935226,0
+NaNSeparatesGuards (correctness) (assertion batch 1),Passed,00:00:00.1164329,5013,0
+NaNSeparatesGuards (correctness) (assertion batch 3),Passed,00:00:00.1162457,16219,0
+NaNSeparatesGuards (correctness) (assertion batch 2),Passed,00:00:00.1155893,6487,0
+ClampInRange (correctness) (assertion batch 1),Passed,00:00:00.1050842,51125,0
+ClampKeepsNegZero (correctness) (assertion batch 1),Passed,00:00:00.0301463,4805,0
+ClampNegInRange (correctness) (assertion batch 1),Passed,00:00:00.0298892,42930,0
+ClampNegInRange (correctness) (assertion batch 3),Passed,00:00:00.0119720,16370,0
+ClampKeepsNegZero (correctness) (assertion batch 2),Passed,00:00:00.0104673,8831,0

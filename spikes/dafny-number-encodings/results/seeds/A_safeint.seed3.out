@@ -1,0 +1,8 @@
+CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/A_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/A_safeint.dfy(58,7): Error: Verification of 'SumBounded' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+58 | method SumBounded(a: seq<SafeInt>, bound: SafeInt) returns (s: SafeInt)
+   |        ^^^^^^^^^^
+
+
+Dafny program verifier finished with 6 verified, 0 errors, 1 time out

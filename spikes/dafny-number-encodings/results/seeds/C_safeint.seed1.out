@@ -1,0 +1,19 @@
+CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/C_safeint.dfy(9,9): Error: Verification of 'Midpoint' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+  |
+9 | function Midpoint(lo: fp64, hi: fp64): (m: fp64)
+  |          ^^^^^^^^
+
+corpus/C_safeint.dfy(19,7): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+19 | method BinarySearch(a: seq<fp64>, key: fp64) returns (idx: int)
+   |        ^^^^^^^^^^^^
+
+corpus/C_safeint.dfy(63,26): Error: this invariant could not be proved to be maintained by the loop
+ Related message: loop invariant violation
+   |
+63 |     invariant (s as real) <= (i as real) * (bound as real)
+   |                           ^^
+
+
+Dafny program verifier finished with 3 verified, 1 error, 2 time outs

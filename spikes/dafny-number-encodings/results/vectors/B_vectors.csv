@@ -1,0 +1,101 @@
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+MathMax_120 (correctness),Passed,00:00:00.1821526,16418,0
+MathMax_112 (correctness),Passed,00:00:00.1790508,16331,0
+MathMax_112 (well-formedness) (assertion batch 2),Passed,00:00:00.1361939,14011,0
+MathMin_008 (correctness),Passed,00:00:00.0865055,22971,0
+MathMin_016 (correctness),Passed,00:00:00.0860082,21419,0
+MathMin_024 (well-formedness) (assertion batch 2),Passed,00:00:00.0818968,7309,0
+MathMin_000 (correctness),Passed,00:00:00.0813550,15621,0
+MathMin_024 (well-formedness) (assertion batch 1),Passed,00:00:00.0805760,6779,0
+MathMax_128 (correctness),Passed,00:00:00.0784505,21797,0
+MathTrunc_000 (correctness),Passed,00:00:00.0717084,15174,0
+MathMax_064 (correctness),Passed,00:00:00.0544708,21771,0
+MathMax_056 (correctness),Passed,00:00:00.0506333,22190,0
+MathMax_008 (correctness),Passed,00:00:00.0492162,21297,0
+MathMax_048 (well-formedness) (assertion batch 3),Passed,00:00:00.0490113,13346,0
+MathMax_016 (correctness),Passed,00:00:00.0473899,22210,0
+MathMin_024 (correctness),Passed,00:00:00.0472657,15184,0
+MathMax_048 (correctness),Passed,00:00:00.0465657,15586,0
+MathMin_024 (well-formedness) (assertion batch 3),Passed,00:00:00.0451188,13298,0
+MathMin_056 (correctness),Passed,00:00:00.0422403,21506,0
+MathMin_064 (correctness),Passed,00:00:00.0418865,22033,0
+MathMin_112 (correctness),Passed,00:00:00.0398326,16261,0
+MathMax_024 (well-formedness) (assertion batch 2),Passed,00:00:00.0392381,7309,0
+MathMax_088 (correctness),Passed,00:00:00.0384088,20199,0
+MathMin_072 (correctness),Passed,00:00:00.0383284,16354,0
+MathMax_072 (correctness),Passed,00:00:00.0376526,16418,0
+MathMin_080 (correctness),Passed,00:00:00.0369077,21516,0
+MathTrunc_016 (correctness),Passed,00:00:00.0349612,18528,0
+MathRound_020 (correctness),Passed,00:00:00.0341359,17081,0
+MathTrunc_018 (correctness),Passed,00:00:00.0335109,18768,0
+MathMax_024 (well-formedness) (assertion batch 3),Passed,00:00:00.0330525,13346,0
+MathMax_080 (well-formedness) (assertion batch 2),Passed,00:00:00.0329623,14005,0
+MathMax_040 (correctness),Passed,00:00:00.0322443,20876,0
+MathMin_048 (correctness),Passed,00:00:00.0321252,15518,0
+MathMax_104 (correctness),Passed,00:00:00.0318976,21950,0
+MathMax_032 (correctness),Passed,00:00:00.0318665,16332,0
+MathTrunc_002 (well-formedness) (assertion batch 2),Passed,00:00:00.0318039,10942,0
+MathMin_032 (well-formedness) (assertion batch 2),Passed,00:00:00.0312307,13963,0
+MathMax_080 (correctness),Passed,00:00:00.0305486,20642,0
+MathMin_040 (correctness),Passed,00:00:00.0305399,23602,0
+MathMax_000 (correctness),Passed,00:00:00.0303040,15687,0
+MathMin_088 (correctness),Passed,00:00:00.0301112,21970,0
+MathMin_032 (correctness),Passed,00:00:00.0296705,16262,0
+MathRound_018 (correctness),Passed,00:00:00.0294030,19077,0
+MathTrunc_002 (well-formedness) (assertion batch 1),Passed,00:00:00.0293702,6779,0
+MathRound_014 (correctness),Passed,00:00:00.0287805,13843,0
+MathTrunc_030 (correctness),Passed,00:00:00.0286495,15263,0
+MathMax_096 (correctness),Passed,00:00:00.0286417,16418,0
+MathMax_032 (well-formedness) (assertion batch 2),Passed,00:00:00.0282740,14011,0
+MathMin_120 (correctness),Passed,00:00:00.0273492,16354,0
+MathTrunc_014 (correctness),Passed,00:00:00.0261099,15116,0
+MathMax_040 (well-formedness) (assertion batch 1),Passed,00:00:00.0258210,6779,0
+MathMin_128 (correctness),Passed,00:00:00.0257630,22059,0
+MathMin_112 (well-formedness) (assertion batch 2),Passed,00:00:00.0245347,13963,0
+MathRound_016 (correctness),Passed,00:00:00.0243027,19077,0
+MathRound_024 (correctness),Passed,00:00:00.0237492,17399,0
+MathTrunc_008 (correctness),Passed,00:00:00.0236475,14706,0
+MathTrunc_004 (well-formedness) (assertion batch 1),Passed,00:00:00.0235590,6779,0
+MathTrunc_026 (correctness),Passed,00:00:00.0235548,14395,0
+MathTrunc_002 (correctness),Passed,00:00:00.0231273,12859,0
+MathRound_002 (correctness),Passed,00:00:00.0229117,12058,0
+MathTrunc_006 (correctness),Passed,00:00:00.0225497,14709,0
+MathRound_008 (correctness),Passed,00:00:00.0222982,17081,0
+MathRound_012 (correctness),Passed,00:00:00.0219281,13843,0
+MathMax_024 (correctness),Passed,00:00:00.0216198,15252,0
+MathRound_002 (well-formedness) (assertion batch 2),Passed,00:00:00.0215207,10182,0
+MathRound_004 (well-formedness) (assertion batch 2),Passed,00:00:00.0214412,10182,0
+MathRound_006 (correctness),Passed,00:00:00.0211886,16838,0
+MathTrunc_028 (correctness),Passed,00:00:00.0209422,14794,0
+MathRound_000 (correctness),Passed,00:00:00.0201002,12987,0
+MathRound_010 (correctness),Passed,00:00:00.0200679,14483,0
+MathRound_030 (correctness),Passed,00:00:00.0200161,18747,0
+MathTrunc_024 (correctness),Passed,00:00:00.0199457,14395,0
+MathMin_104 (correctness),Passed,00:00:00.0197212,21775,0
+MathTrunc_020 (correctness),Passed,00:00:00.0194346,14706,0
+MathTrunc_004 (correctness),Passed,00:00:00.0190360,12859,0
+MathMin_048 (well-formedness) (assertion batch 3),Passed,00:00:00.0189915,13298,0
+MathMin_096 (correctness),Passed,00:00:00.0188915,16354,0
+MathRound_026 (correctness),Passed,00:00:00.0187806,17399,0
+MathMin_048 (well-formedness) (assertion batch 1),Passed,00:00:00.0179186,6779,0
+MathRound_022 (correctness),Passed,00:00:00.0178416,17399,0
+MathRound_002 (well-formedness) (assertion batch 1),Passed,00:00:00.0178201,6779,0
+MathMin_032 (well-formedness) (assertion batch 1),Passed,00:00:00.0177362,6779,0
+MathRound_004 (well-formedness) (assertion batch 1),Passed,00:00:00.0168730,6779,0
+MathTrunc_012 (correctness),Passed,00:00:00.0164581,15119,0
+MathTrunc_010 (correctness),Passed,00:00:00.0153812,18528,0
+MathTrunc_022 (correctness),Passed,00:00:00.0148708,14395,0
+MathMax_112 (well-formedness) (assertion batch 1),Passed,00:00:00.0147938,8947,0
+MathMax_048 (well-formedness) (assertion batch 2),Passed,00:00:00.0142707,7309,0
+MathRound_028 (correctness),Passed,00:00:00.0141032,17819,0
+MathMax_048 (well-formedness) (assertion batch 1),Passed,00:00:00.0139420,6779,0
+MathTrunc_004 (well-formedness) (assertion batch 2),Passed,00:00:00.0136201,10942,0
+MathMin_048 (well-formedness) (assertion batch 2),Passed,00:00:00.0135577,7309,0
+MathMax_024 (well-formedness) (assertion batch 1),Passed,00:00:00.0132967,6779,0
+MathRound_004 (correctness),Passed,00:00:00.0132304,12058,0
+MathMin_040 (well-formedness),Passed,00:00:00.0128317,6779,0
+MathMax_040 (well-formedness) (assertion batch 2),Passed,00:00:00.0125382,14005,0
+MathMax_032 (well-formedness) (assertion batch 1),Passed,00:00:00.0114436,6779,0
+MathMin_080 (well-formedness),Passed,00:00:00.0106440,8935,0
+MathMax_080 (well-formedness) (assertion batch 1),Passed,00:00:00.0105980,8935,0
+MathMin_112 (well-formedness) (assertion batch 1),Passed,00:00:00.0081233,8947,0

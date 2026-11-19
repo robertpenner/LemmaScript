@@ -1,0 +1,17 @@
+repro/R07_DivideByNegZero.dfy(10,9): Error: fp64 division has invalid operand combination (e.g., ∞+(-∞), ∞*0, 0/0, ∞/∞)
+   |
+10 |   r := x / z;
+   |          ^
+
+repro/R07_DivideByNegZero.dfy(17,9): Error: fp64 division has invalid operand combination (e.g., ∞+(-∞), ∞*0, 0/0, ∞/∞)
+   |
+17 |   r := x / z;
+   |          ^
+
+repro/R07_DivideByNegZero.dfy(17,9): Error: possible division by zero
+   |
+17 |   r := x / z;
+   |          ^
+
+
+Dafny program verifier finished with 5 verified, 3 errors

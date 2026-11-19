@@ -1,0 +1,23 @@
+CLI: Warning: The file '/Users/robertpenner/git/robertpenner/LemmaScript-ws-06/spikes/dafny-number-encodings/corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/C_lerp.dfy(24,6): Error: Verification of 'LerpAtOneOvershoots' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+24 | lemma LerpAtOneOvershoots() // @lemma
+   |       ^^^^^^^^^^^^^^^^^^^
+
+corpus/C_lerp.dfy(36,6): Error: Verification of 'LerpEndpointsSmallInts' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+36 | lemma LerpEndpointsSmallInts(a: fp64, b: fp64) // @lemma
+   |       ^^^^^^^^^^^^^^^^^^^^^^
+
+corpus/C_lerp.dfy(52,6): Error: Verification of 'BridgeRoundTrip' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+52 | lemma BridgeRoundTrip(i: int) // @lemma
+   |       ^^^^^^^^^^^^^^^
+
+corpus/C_lerp.dfy(59,6): Error: Verification of 'BridgeAdd' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+59 | lemma BridgeAdd(x: fp64, y: fp64) // @lemma
+   |       ^^^^^^^^^
+
+
+Dafny program verifier finished with 5 verified, 0 errors, 4 time outs

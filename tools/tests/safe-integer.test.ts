@@ -21,11 +21,11 @@ export function isSafeBig(b: bigint): boolean {
 }
 `;
 
-function sourceModule() {
+function sourceModule(text = source, typeChecked = true) {
   const project = new Project({ compilerOptions: { strict: true,
     target: ScriptTarget.ESNext, lib: ["lib.esnext.d.ts"], types: [], skipLibCheck: true } });
-  const file = project.createSourceFile("safe.ts", source);
-  assert.deepEqual(project.getPreEmitDiagnostics(), [], "the regression must be valid TypeScript");
+  const file = project.createSourceFile("safe.ts", text);
+  if (typeChecked) assert.deepEqual(project.getPreEmitDiagnostics(), [], "the regression must be valid TypeScript");
   return narrowModule(resolveModule(extractModule(file)));
 }
 
@@ -75,4 +75,40 @@ test("Lean lowers Number.isSafeInteger to the 2^53 - 1 bound", () => {
   assert.doesNotMatch(output, /isSafeInteger/, output);
   assert.match(output, /-9007199254740991 ≤ n ∧ n ≤ 9007199254740991/, output);
   assert.match(output, /def isSafeBig[^\n]*\n(?:[^\n]*\n)*?\s*false\b/, output);
+});
+
+// A value that may hold a number at runtime cannot fold to false: with
+// x = 3, Number.isSafeInteger(x) is true. Such calls, and calls with the wrong
+// arity, must fail instead of emitting a raw Number.isSafeInteger call.
+test("Number.isSafeInteger rejects numeric-capable unions and non-unary calls", () => {
+  const rejected: [string, RegExp, boolean][] = [
+    ["export function f(x: number | undefined): boolean { return Number.isSafeInteger(x); }",
+      /may hold a number/, true],
+    ["export function f(x: number | string): boolean { return Number.isSafeInteger(x); }",
+      /may hold a number/, true],
+    ["export function f(): boolean { return (Number.isSafeInteger as any)(); }",
+      /exactly one argument, got 0/, false],
+    ["export function f(a: number, b: number): boolean { return (Number.isSafeInteger as any)(a, b); }",
+      /exactly one argument, got 2/, false],
+  ];
+  for (const [text, message, typeChecked] of rejected) {
+    for (const transform of [transformModuleDafny, transformModuleLean]) {
+      let output = "";
+      assert.throws(() => {
+        const { typesFile, defFile } = transform(sourceModule(text, typeChecked));
+        const decls = [...(typesFile?.decls ?? []), ...defFile.decls];
+        output = transform === transformModuleDafny
+          ? emitDafnyFile({ ...defFile, decls }, "safe.ts")
+          : (resetLeanModule(), emitLeanFile({ ...defFile, decls }));
+      }, message, `${text}\n${output}`);
+    }
+  }
+});
+
+test("Lean rejects Number.isSafeInteger on a real with the real diagnostic", () => {
+  for (const arg of ["a / b", "1.5"]) {
+    const text = `export function f(a: number, b: number): boolean { return Number.isSafeInteger(${arg}); }`;
+    assert.throws(() => transformModuleLean(sourceModule(text)),
+      /real arithmetic is not supported by the Lean backend/, arg);
+  }
 });

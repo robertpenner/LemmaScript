@@ -867,6 +867,30 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
           right: { kind: "binop", op: "≤", left: n, right: { kind: "num", value: max } },
         };
       }
+      // A real is safe when it is integral and within that bound; the Dafny
+      // predicate binds the argument once. Types disjoint from `number` are
+      // never safe integers. Optionals, unions and opaque values may hold a
+      // number at runtime, so they are rejected rather than folded to false.
+      if (e.fn.kind === "field" && e.fn.obj.kind === "var" && e.fn.obj.name === "Number" &&
+          e.fn.field === "isSafeInteger") {
+        if (e.args.length !== 1)
+          throw new Error(`Number.isSafeInteger expects exactly one argument, got ${e.args.length}`);
+        const ty = e.args[0].ty;
+        if (ty.kind === "real") {
+          if (_opts.backend !== "dafny")
+            throw new Error("real arithmetic is not supported by the Lean backend (needs noncomputable ℝ / Mathlib).");
+          return { kind: "app", fn: "IsSafeIntegerReal", args: [lowerExpr(e.args[0], binds)] };
+        }
+        const decl = declOfTy(_typeDecls, ty);
+        if (["bool", "string", "void", "array", "map", "set", "tuple", "fn"].includes(ty.kind) ||
+            decl?.kind === "record" || decl?.kind === "string-union" ||
+            (decl?.kind === "discriminated-union" && decl.discriminant !== "__isArray__")) {
+          lowerExpr(e.args[0], binds);  // preserve any lifted side effects; value is the constant false
+          return { kind: "bool", value: false };
+        }
+        throw new Error(`Number.isSafeInteger on a value of type ${ty.kind === "user" ? ty.name : ty.kind} ` +
+          "that may hold a number is not supported; narrow it to number first");
+      }
       // Math.abs/min/max preserve the resolved numeric type. Mixed operands
       // need explicit int/nat→real coercions, just like real binary operations.
       if (e.fn.kind === "field" && e.fn.obj.kind === "var" && e.fn.obj.name === "Math") {

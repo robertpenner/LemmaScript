@@ -667,6 +667,7 @@ function emitExpr(e: Expr): string {
       if (e.fn === "JSStringLt") needPreamble("JSStringLt");
       if (e.fn === "CeilReal") needPreamble("CeilReal");
       if (e.fn === "FloorReal") needPreamble("FloorReal");
+      if (e.fn === "IsSafeIntegerReal") needPreamble("IsSafeIntegerReal");
       if (e.fn === "StringFromCharCode") needPreamble("StringFromCharCode");
       if (e.fn === "NatToString") needPreamble("NatToString");
       if (e.fn === "IntToString") { needPreamble("NatToString"); needPreamble("IntToString"); }
@@ -1159,6 +1160,12 @@ const FLOOR_REAL = `function FloorReal(x: real): int
   x.Floor
 }`;
 
+// Number.isSafeInteger on a real: integral and within ±(2^53 - 1).
+const IS_SAFE_INTEGER_REAL = `predicate IsSafeIntegerReal(x: real)
+{
+  x.Floor as real == x && -9007199254740991 <= x.Floor <= 9007199254740991
+}`;
+
 const CEIL_REAL = `function CeilReal(x: real): int
 {
   if x == (x.Floor as real) then x.Floor
@@ -1638,6 +1645,7 @@ const PREAMBLE_CODE: [string, string | (() => string)][] = [
   ["JSStringLt", JS_STRING_LT],
   ["CeilReal", CEIL_REAL],
   ["FloorReal", FLOOR_REAL],
+  ["IsSafeIntegerReal", IS_SAFE_INTEGER_REAL],
   ["SeqIndexOf", SEQ_INDEX_OF],
   ["SeqFindIndex", SEQ_FIND_INDEX],
   ["SeqFindLastIndex", SEQ_FIND_LAST_INDEX],

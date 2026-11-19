@@ -20,7 +20,7 @@ function ClampNeg(x: SafeInt, lo: SafeInt, hi: SafeInt): SafeInt
   if !(x >= lo) then lo else if !(x <= hi) then hi else x
 }
 
-lemma GuardFormsAgree(x: SafeInt, lo: SafeInt, hi: SafeInt) // @lemma
+lemma GuardFormsAgree(x: SafeInt, lo: SafeInt, hi: SafeInt) // @target
   requires lo <= hi
   ensures Clamp(x, lo, hi) == ClampNeg(x, lo, hi)
 {
@@ -29,7 +29,7 @@ lemma GuardFormsAgree(x: SafeInt, lo: SafeInt, hi: SafeInt) // @lemma
 function MathMin(a: SafeInt, b: SafeInt): SafeInt { if a <= b then a else b }
 function MathMax(a: SafeInt, b: SafeInt): SafeInt { if a >= b then a else b }
 
-lemma ClampIsMinMax(x: SafeInt, lo: SafeInt, hi: SafeInt) // @lemma
+lemma ClampIsMinMax(x: SafeInt, lo: SafeInt, hi: SafeInt) // @target
   requires lo <= hi
   ensures Clamp(x, lo, hi) == MathMin(MathMax(x, lo), hi)
 {

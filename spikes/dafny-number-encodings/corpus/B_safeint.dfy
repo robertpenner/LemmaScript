@@ -28,38 +28,38 @@ function Midpoint(lo: Num, hi: Num): (m: Num)
   Add(lo, t)
 }
 
-lemma SubFinite(x: Num, y: Num) // @lemma
+lemma SubFinite(x: Num, y: Num) // @helper
   requires x.Finite? && y.Finite?
   ensures Sub(x, y).Finite? && Sub(x, y).r == x.r - y.r
 {
 }
 
-lemma AddFinite(x: Num, y: Num) // @lemma
+lemma AddFinite(x: Num, y: Num) // @helper
   requires x.Finite? && y.Finite?
   ensures Add(x, y).Finite? && Add(x, y).r == x.r + y.r
 {
 }
 
-lemma DivFinite(x: Num, y: Num) // @lemma
+lemma DivFinite(x: Num, y: Num) // @helper
   requires x.Finite? && y.Finite? && y.r != 0.0
   ensures Div(x, y).Finite? && Div(x, y).r == x.r / y.r
 {
 }
 
-lemma IntSum(a: int, b: int) // @lemma
+lemma IntSum(a: int, b: int) // @helper
   ensures (a as real + b as real).Floor == a + b
 {
   assert a as real + b as real == (a + b) as real; // @manual
 }
 
-lemma HalfFloorBounds(n: int) // @lemma
+lemma HalfFloorBounds(n: int) // @helper
   requires n >= 0
   ensures 0 <= ((n as real) / 2.0).Floor <= n
   ensures n > 0 ==> ((n as real) / 2.0).Floor < n
 {
 }
 
-lemma IntNumSucc(x: Num) // @lemma
+lemma IntNumSucc(x: Num) // @helper
   requires IsIntNum(x)
   ensures IsIntNum(Lit(x.r + 1.0))
 {
@@ -105,19 +105,25 @@ function SumR(a: seq<Num>): real
   if |a| == 0 then 0.0 else SumR(a[..|a| - 1]) + a[|a| - 1].r
 }
 
-// No range precondition is needed: Encoding B has no overflow and no
-// rounding, so the accumulator is always exact.
-method SumBounded(a: seq<Num>) returns (s: Num)
-  requires forall i :: 0 <= i < |a| ==> a[i].Finite? && !a[i].negZero
+// The same contract as A_safeint.dfy. Encoding B has no overflow and no
+// rounding, so the accumulator is exact without the range precondition; it
+// is kept so the three encodings state the same obligation.
+method SumBounded(a: seq<Num>, bound: Num) returns (s: Num)
+  requires IsIntNum(bound) && 0.0 <= bound.r
+  requires forall i :: 0 <= i < |a| ==> a[i].Finite? && IsIntNum(a[i]) && !a[i].negZero && 0.0 <= a[i].r <= bound.r
+  requires (|a| as real) * bound.r <= 9007199254740991.0
   ensures s.Finite? && s.r == SumR(a)
+  ensures s.r <= (|a| as real) * bound.r
 {
   s := PosZero;
   var i := 0;
   while i < |a|
     invariant 0 <= i <= |a|
     invariant s.Finite? && s.r == SumR(a[..i])
+    invariant 0.0 <= s.r <= (i as real) * bound.r
   {
     assert a[..i + 1][..i] == a[..i]; // @manual
+    assert ((i + 1) as real) * bound.r == (i as real) * bound.r + bound.r; // @manual
     s := Add(s, a[i]);
     i := i + 1;
   }

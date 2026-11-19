@@ -38,32 +38,32 @@ function UshrN(x: SafeInt, n: nat): (r: SafeInt)
   ((ToUint32(x as int) as bv32) >> n) as int as SafeInt
 }
 
-lemma OrZeroIdempotent(x: SafeInt) // @lemma
+lemma OrZeroIdempotent(x: SafeInt) // @target
   ensures OrZero(OrZero(x)) == OrZero(x)
 {
 }
 
-lemma OrZeroOnInt32(x: SafeInt) // @lemma
+lemma OrZeroOnInt32(x: SafeInt) // @target
   requires -TWO31 <= x as int < TWO31
   ensures OrZero(x) == x
 {
 }
 
-lemma ImulSmall(a: SafeInt, b: SafeInt) // @lemma
+lemma ImulSmall(a: SafeInt, b: SafeInt) // @target
   requires 0 <= a < 65536 && 0 <= b < 32768
   ensures Imul(a, b) as int == a as int * b as int
 {
   MulBound(a as int, 65535, b as int, 32767); // @manual
 }
 
-lemma MulBound(x: int, xm: int, y: int, ym: int) // @lemma
+lemma MulBound(x: int, xm: int, y: int, ym: int) // @helper
   requires 0 <= x <= xm && 0 <= y <= ym
   ensures x * y <= xm * ym
 {
   assert x * y <= xm * y; // @manual
 }
 
-lemma AndWithSelf(a: SafeInt) // @lemma
+lemma AndWithSelf(a: SafeInt) // @target
   ensures And(a, a) == OrZero(a)
 {
   var u := ToUint32(a as int) as bv32; // @manual
@@ -73,7 +73,7 @@ lemma AndWithSelf(a: SafeInt) // @lemma
 
 // The int -> bv32 -> int round trip on a symbolic value. With the pinned
 // toolchain this lemma times out at 30 s; AndWithSelf depends on it.
-lemma Bv32RoundTrip(x: int) // @lemma
+lemma Bv32RoundTrip(x: int) // @helper
   requires 0 <= x < TWO32
   ensures (x as bv32) as int == x
 {

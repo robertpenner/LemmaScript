@@ -5,8 +5,10 @@
 //
 // Proof-hint convention for the whole corpus: a line ending in `// @manual`
 // is a hand-written assertion, lemma call, or extra invariant that exists only
-// to help the verifier. A declaration line ending in `// @lemma` is a
-// hand-written helper lemma. run.sh counts both tags per file.
+// to help the verifier. A lemma declaration line ends in `// @helper` when
+// another proof calls the lemma (a hand-written hint) and in `// @target`
+// when the lemma is a workload statement. run.sh counts the three tags per
+// file, matching only tags at the end of a line.
 
 const MAX_SAFE: int := 9007199254740991
 const TWO32: int := 4294967296

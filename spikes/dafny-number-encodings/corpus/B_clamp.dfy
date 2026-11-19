@@ -21,21 +21,21 @@ function ClampMM(x: Num, lo: Num, hi: Num): Num
 }
 
 // JS: clamp(NaN, 0, 1) is NaN, clampNeg(NaN, 0, 1) is 0, clampMM is NaN.
-lemma NaNSeparatesGuards() // @lemma
+lemma NaNSeparatesGuards() // @target
   ensures Clamp(NaN, PosZero, Lit(1.0)) == NaN
   ensures ClampNeg(NaN, PosZero, Lit(1.0)) == PosZero
   ensures ClampMM(NaN, PosZero, Lit(1.0)) == NaN
 {
 }
 
-lemma ClampInRange(x: Num, lo: Num, hi: Num) // @lemma
+lemma ClampInRange(x: Num, lo: Num, hi: Num) // @target
   requires lo.Finite? && hi.Finite? && lo.r <= hi.r
   requires !x.NaN?
   ensures var r := Clamp(x, lo, hi); r.Finite? && lo.r <= r.r <= hi.r
 {
 }
 
-lemma ClampNegInRange(x: Num, lo: Num, hi: Num) // @lemma
+lemma ClampNegInRange(x: Num, lo: Num, hi: Num) // @target
   requires lo.Finite? && hi.Finite? && lo.r <= hi.r
   ensures var r := ClampNeg(x, lo, hi); r.Finite? && lo.r <= r.r <= hi.r
 {
@@ -43,13 +43,13 @@ lemma ClampNegInRange(x: Num, lo: Num, hi: Num) // @lemma
 
 // Off NaN the guard forms agree; at signed zeros they still may differ in
 // sign: clamp(-0, +0, 1) is -0 for both because -0 < +0 is false.
-lemma GuardsAgreeOffNaN(x: Num, lo: Num, hi: Num) // @lemma
+lemma GuardsAgreeOffNaN(x: Num, lo: Num, hi: Num) // @target
   requires !x.NaN? && !lo.NaN? && !hi.NaN?
   ensures Clamp(x, lo, hi) == ClampNeg(x, lo, hi)
 {
 }
 
-lemma ClampKeepsNegZero() // @lemma
+lemma ClampKeepsNegZero() // @target
   ensures Clamp(NegZero, PosZero, Lit(1.0)) == NegZero
   ensures ClampMM(NegZero, PosZero, Lit(1.0)) == PosZero
 {

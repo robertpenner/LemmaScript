@@ -49,7 +49,7 @@ method BinarySearch(a: seq<SafeInt>, key: SafeInt) returns (idx: SafeInt)
   return -1;
 }
 
-lemma MulMonotone(x: int, y: int, b: int) // @lemma
+lemma MulMonotone(x: int, y: int, b: int) // @helper
   requires 0 <= x <= y && 0 <= b
   ensures x * b <= y * b
 {
@@ -60,6 +60,7 @@ method SumBounded(a: seq<SafeInt>, bound: SafeInt) returns (s: SafeInt)
   requires forall i :: 0 <= i < |a| ==> 0 <= a[i] <= bound
   requires |a| * bound as int <= MAX_SAFE
   ensures s as int == Sum(seq(|a|, i requires 0 <= i < |a| => a[i] as int))
+  ensures s as int <= |a| * bound as int
 {
   ghost var xs := seq(|a|, i requires 0 <= i < |a| => a[i] as int);
   s := 0;

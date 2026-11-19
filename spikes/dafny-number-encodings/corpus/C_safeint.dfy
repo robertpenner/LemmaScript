@@ -23,6 +23,7 @@ method BinarySearch(a: seq<fp64>, key: fp64) returns (idx: int)
   requires forall i, j :: 0 <= i < j < |a| ==> fp64.LessOrEqual(a[i], a[j])
   ensures -1 <= idx < |a|
   ensures 0 <= idx ==> StrictEq(a[idx], key)
+  ensures idx < 0 ==> forall i :: 0 <= i < |a| ==> !StrictEq(a[i], key)
 {
   var lo: fp64 := 0.0;
   var hi: fp64 := fp64.FromReal(|a| as real);
@@ -31,6 +32,8 @@ method BinarySearch(a: seq<fp64>, key: fp64) returns (idx: int)
     invariant IsSafeIntF(lo) && IsSafeIntF(hi)
     invariant fp64.LessOrEqual(0.0, lo) && fp64.LessOrEqual(lo, hi)
     invariant hi as int <= |a|
+    invariant forall i :: 0 <= i < lo as int ==> fp64.Less(a[i], key)
+    invariant forall i :: hi as int <= i < |a| ==> fp64.Less(key, a[i])
     decreases hi as int - lo as int
   {
     var mid := Midpoint(lo, hi);
@@ -46,6 +49,12 @@ method BinarySearch(a: seq<fp64>, key: fp64) returns (idx: int)
   return -1;
 }
 
+function SumR(a: seq<fp64>): real
+  requires forall i :: 0 <= i < |a| ==> a[i].IsFinite
+{
+  if |a| == 0 then 0.0 else SumR(a[..|a| - 1]) + a[|a| - 1] as real
+}
+
 // Accumulating fp64 values is not exact. With every element an integer in
 // [0, bound] and |a| * bound <= 2^53, every partial sum is exact.
 method SumBounded(a: seq<fp64>, bound: fp64) returns (s: fp64)
@@ -54,6 +63,7 @@ method SumBounded(a: seq<fp64>, bound: fp64) returns (s: fp64)
   requires (|a| as real) * (bound as real) <= 9007199254740991.0
   ensures IsSafeIntF(s)
   ensures (s as real) <= (|a| as real) * (bound as real)
+  ensures s as real == SumR(a)
 {
   s := 0.0;
   var i := 0;
@@ -61,8 +71,11 @@ method SumBounded(a: seq<fp64>, bound: fp64) returns (s: fp64)
     invariant 0 <= i <= |a|
     invariant IsSafeIntF(s) && fp64.LessOrEqual(0.0, s)
     invariant (s as real) <= (i as real) * (bound as real)
+    invariant s as real == SumR(a[..i])
   {
+    assert a[..i + 1][..i] == a[..i]; // @manual
     s := Add(s, a[i]);
     i := i + 1;
   }
+  assert a[..|a|] == a; // @manual
 }

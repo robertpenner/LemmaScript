@@ -790,6 +790,29 @@ function coerceCallArgs(args: TExpr[], fn: TExpr, ctx: Ctx): TExpr[] {
 }
 
 /** Infer return type for collection/string method calls. */
+/** Result type of Math.min/max over operands of the given types: real if any
+ *  operand is real, nat if every operand is nat, int if every operand is
+ *  integral, otherwise the first operand's type. */
+function mathMinMaxTy(tys: Ty[]): Ty {
+  if (tys.some(t => t.kind === "real")) return { kind: "real" };
+  if (tys.every(t => t.kind === "nat")) return tys[0];
+  if (tys.every(t => t.kind === "int" || t.kind === "nat")) return { kind: "int" };
+  return tys[0];
+}
+
+/** Element types reached by a Math.max/min spread argument: the
+ *  `arrayConcat` tree built by extract, with array-literal segments for
+ *  positional arguments. Returns [] if a segment's type is unknown. */
+function spreadLeafTys(e: TExpr): Ty[] {
+  if (e.kind === "binop" && e.op === "arrayConcat") {
+    const l = spreadLeafTys(e.left), r = spreadLeafTys(e.right);
+    return l.length > 0 && r.length > 0 ? [...l, ...r] : [];
+  }
+  if (e.kind === "arrayLiteral") return e.elems.map(x => x.ty);
+  if (e.ty.kind === "array") return [e.ty.elem];
+  return [];
+}
+
 function inferMethodReturnTy(fn: TExpr, args: TExpr[], ctx: Ctx): Ty {
   if (fn.kind !== "field") return { kind: "unknown" };
   // `Array.isArray(x)` always returns boolean. narrow.ts recognizes this call as
@@ -809,8 +832,13 @@ function inferMethodReturnTy(fn: TExpr, args: TExpr[], ctx: Ctx): Ty {
   // (real if any operand is real); floor/ceil/round/trunc return an integer.
   if (fn.obj.kind === "var" && fn.obj.name === "Math") {
     if (fn.field === "abs" && args.length === 1) return args[0].ty;
-    if ((fn.field === "min" || fn.field === "max") && args.length >= 1)
-      return args.some(a => a.ty.kind === "real") ? { kind: "real" } : args[0].ty;
+    if (fn.field === "min" || fn.field === "max") {
+      if (args.length === 0)
+        throw new Error(`Math.${fn.field}() with no arguments returns ${fn.field === "min" ? "Infinity" : "-Infinity"}, which is not representable in idealized mode`);
+      if (args.some(a => isBigInt(a.ty)))
+        throw new Error(`Math.${fn.field} does not accept bigint arguments (JavaScript throws a TypeError)`);
+      return mathMinMaxTy(args.map(a => a.ty));
+    }
     if (["floor", "ceil", "round", "trunc"].includes(fn.field)) return { kind: "int" };
   }
   const objTy = fn.obj.ty;
@@ -1132,6 +1160,16 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       if (ty.kind === "unknown" && fn.kind === "var" && (fn.name === "BigInt" || fn.name === "Number") &&
           args.length === 1 && (args[0].ty.kind === "int" || args[0].ty.kind === "nat")) {
         ty = fn.name === "BigInt" ? { kind: "int", big: true } : { kind: "int" };
+      }
+      // MaxOfSeq/MinOfSeq: extract's rewrite of Math.max/min with spread arguments.
+      if (ty.kind === "unknown" && fn.kind === "var" && (fn.name === "MaxOfSeq" || fn.name === "MinOfSeq") &&
+          args.length === 1 && !binding(ctx.env, fn.name) && !ctx.fnReturns.has(fn.name)) {
+        const leaves = spreadLeafTys(args[0]);
+        if (leaves.some(isBigInt))
+          throw new Error(`Math.${fn.name === "MaxOfSeq" ? "max" : "min"} does not accept bigint arguments (JavaScript throws a TypeError)`);
+        // The MaxOfSeq/MinOfSeq helpers return int, so integral spreads are int (never nat).
+        if (leaves.some(t => t.kind === "real")) ty = { kind: "real" };
+        else if (leaves.length > 0 && leaves.every(t => t.kind === "int" || t.kind === "nat")) ty = { kind: "int" };
       }
       // Call through a function-typed value: its fn type carries the result
       if (ty.kind === "unknown" && fn.ty.kind === "fn") ty = fn.ty.result;

@@ -868,9 +868,12 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
         };
       }
       // A real is safe when it is integral and within that bound; the Dafny
-      // predicate binds the argument once. Types disjoint from `number` are
-      // never safe integers. Optionals, unions and opaque values may hold a
-      // number at runtime, so they are rejected rather than folded to false.
+      // predicate binds the argument once. Types that TypeScript never lets
+      // hold a number are never safe integers. Optionals, unions, records
+      // (numeric enums, branded numbers, and interfaces `number` satisfies
+      // extract as records), `void` (a `() => number` is assignable to
+      // `() => void`) and opaque values may hold a number at runtime, so they
+      // are rejected rather than folded to false.
       if (e.fn.kind === "field" && e.fn.obj.kind === "var" && e.fn.obj.name === "Number" &&
           e.fn.field === "isSafeInteger") {
         if (e.args.length !== 1)
@@ -882,10 +885,15 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
           return { kind: "app", fn: "IsSafeIntegerReal", args: [lowerExpr(e.args[0], binds)] };
         }
         const decl = declOfTy(_typeDecls, ty);
-        if (["bool", "string", "void", "array", "map", "set", "tuple", "fn"].includes(ty.kind) ||
-            decl?.kind === "record" || decl?.kind === "string-union" ||
-            (decl?.kind === "discriminated-union" && decl.discriminant !== "__isArray__")) {
-          lowerExpr(e.args[0], binds);  // preserve any lifted side effects; value is the constant false
+        if (["bool", "string", "array", "map", "set", "tuple", "fn"].includes(ty.kind) ||
+            decl?.kind === "string-union") {
+          // Lifted method calls stay in `binds`. Folding a compound argument
+          // would drop its proof obligations (callee preconditions, division
+          // by zero), so only a variable or literal may be discarded.
+          const arg = lowerExpr(e.args[0], binds);
+          if (!["var", "num", "bool", "str"].includes(arg.kind))
+            throw new Error("Number.isSafeInteger on a non-number expression is only supported on a variable or " +
+              "literal; bind the argument to a variable first");
           return { kind: "bool", value: false };
         }
         throw new Error(`Number.isSafeInteger on a value of type ${ty.kind === "user" ? ty.name : ty.kind} ` +

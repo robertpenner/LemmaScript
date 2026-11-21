@@ -166,8 +166,8 @@ const STMT_RULES = [ruleMatchOnMapGetStmt];
 
 /** Pair rule: let x = m.get(k); match x { Some(v) => sb, None => nb }
  *  → if k in m { var v := m[k]; sb } else { nb }
- *  Requires x not referenced in any stmt after the match. Bind v once instead
- *  of substituting, to preserve semantics under mutation of m. */
+ *  Requires x not referenced in either arm or after the match. Bind v once
+ *  instead of substituting, to preserve semantics under mutation of m. */
 function tryLetMatchOnMapGet(s1: Stmt, s2: Stmt, restStmts: Stmt[]): Stmt | null {
   if (s1.kind !== "let" || s1.mutable) return null;
   const get = isMapGet(s1.value);
@@ -177,7 +177,9 @@ function tryLetMatchOnMapGet(s1: Stmt, s2: Stmt, restStmts: Stmt[]): Stmt | null
   if (!matchOnX) return null;
   const arms = getSomeNoneArms(s2.arms);
   if (!arms) return null;
-  if (usesNameInStmts(restStmts, s1.name)) return null;
+  if (usesNameInStmts(arms.someArm.body, s1.name) ||
+      usesNameInStmts(arms.noneArm.body, s1.name) ||
+      usesNameInStmts(restStmts, s1.name)) return null;
   const idx: Expr = { kind: "index", arr: get.obj, idx: get.key };
   const valTy = get.objTy.kind === "map" ? get.objTy.value : { kind: "unknown" as const };
   const someBody: Stmt[] = arms.binder
@@ -251,6 +253,7 @@ function rewriteChildrenExpr(e: Expr): Expr {
     case "toInt": return { ...e, expr: r(e.expr) };
     case "toReal": return { ...e, expr: r(e.expr) };
     case "index": return { ...e, arr: r(e.arr), idx: r(e.idx) };
+    case "stringIndex": return { ...e, str: r(e.str), idx: r(e.idx) };
     case "tupleLiteral": return { ...e, elems: e.elems.map(r) };
     case "tupleProj": return { ...e, obj: r(e.obj) };
     case "record": return { ...e, spread: e.spread ? r(e.spread) : null,

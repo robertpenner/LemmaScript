@@ -180,11 +180,12 @@ function isEmittedUserName(name: string): boolean {
  *  namespace so it can't collapse onto an escaped user name. Bypasses the user
  *  map on purpose: the raw name is synthesized, so it must be freshened *away
  *  from* a same-spelled user name, not aliased onto it. Cached so a declaration
- *  and its references render identically. */
-function escapeGeneratedName(name: string): string {
+ *  and its references render identically. An optional base changes the candidate
+ *  spelling without changing the original name used as the cache key. */
+function escapeGeneratedName(name: string, base = name): string {
   const cached = _generatedDafnyNames.get(name);
   if (cached !== undefined) return cached;
-  const emitted = freshDafnyName(dafnyBaseName(name));
+  const emitted = freshDafnyName(dafnyBaseName(base));
   _generatedDafnyNames.set(name, emitted);
   _takenDafnyNames.add(emitted);
   return emitted;
@@ -356,7 +357,18 @@ function emitExpr(e: Expr): string {
             needPreamble("SafeSlice");
             return `SafeSlice(${obj}, ${args[0]}, ${args[1] ?? `|${obj}|`})`;
           }
-          return args.length === 1 ? `${obj}[${args[0]}..]` : `${obj}[${args[0]}..${args[1]}]`;
+          // JS negative index: xs.slice(0, -N) → xs[0..|xs|-N].
+          // Same rewrite the string branch uses.
+          const negVal = (a: typeof e.args[0]): string | null => {
+            const v = exactIntegerLiteral(a);
+            return v !== null && v < 0n ? (-v).toString(10) : null;
+          };
+          const loN = negVal(e.args[0]);
+          const loEx = loN !== null ? `|${obj}|-${loN}` : args[0];
+          if (args.length === 1) return `${obj}[${loEx}..]`;
+          const hiN = negVal(e.args[1]);
+          const hiEx = hiN !== null ? `|${obj}|-${hiN}` : args[1];
+          return `${obj}[${loEx}..${hiEx}]`;
         }
         if (e.method === "map") {
           // Always a seq comprehension: Seq.Map would hide the element access
@@ -516,8 +528,12 @@ function emitExpr(e: Expr): string {
         if (e.method === "trim")    { needPreamble("StringTrim"); return `StringTrim(${obj})`; }
         if (e.method === "trimEnd") { needPreamble("StringTrim"); return `StringTrimRight(${obj})`; }
         if (e.method === "trimStart") { needPreamble("StringTrim"); return `StringTrimLeft(${obj})`; }
-        if (e.method === "toLowerCase") { needPreamble("StringToLower"); return `StringToLower(${obj})`; }
-        if (e.method === "toUpperCase") { needPreamble("StringToUpper"); return `StringToUpper(${obj})`; }
+        if (e.method === "toLowerCase") {
+          needPreamble("StringIsAscii"); needPreamble("StringToLower"); return `StringToLower(${obj})`;
+        }
+        if (e.method === "toUpperCase") {
+          needPreamble("StringIsAscii"); needPreamble("StringToUpper"); return `StringToUpper(${obj})`;
+        }
         if (e.method === "includes") {
           needPreamble("StringIndexOf");
           if (args.length === 2) {
@@ -661,6 +677,7 @@ function emitExpr(e: Expr): string {
       if (e.fn === "MathAbs") needPreamble("MathAbs");
       if (e.fn === "MathMin") needPreamble("MathMin");
       if (e.fn === "MathMax") needPreamble("MathMax");
+      if (e.fn === "IsSafeIntegerReal") needPreamble("IsSafeIntegerReal");
       if (e.fn === "MathAbsReal") needPreamble("MathAbsReal");
       if (e.fn === "MathMinReal") needPreamble("MathMinReal");
       if (e.fn === "MathMaxReal") needPreamble("MathMaxReal");
@@ -707,6 +724,11 @@ function emitExpr(e: Expr): string {
 
     case "toReal":
       return `(${emitExpr(e.expr)} as real)`;
+
+    case "stringIndex":
+      // TS indexing returns a string; Dafny's native string subscript is a
+      // char. The singleton sequence preserves the native bounds obligation.
+      return `[${emitExpr(e.str)}[${emitExpr(e.idx)}]]`;
 
     case "index": {
       const obj = emitExpr(e.arr);
@@ -1148,6 +1170,11 @@ const CEIL_REAL = `function CeilReal(x: real): int
   else x.Floor + 1
 }`;
 
+const IS_SAFE_INTEGER_REAL = `predicate IsSafeIntegerReal(x: real)
+{
+  x.Floor as real == x && -9007199254740991 <= x.Floor <= 9007199254740991
+}`;
+
 const CALLBACK_INDICES = `function CallbackIndices(n: nat): (r: seq<int>)
   ensures |r| == n
   ensures forall i :: 0 <= i < n ==> r[i] == i
@@ -1456,27 +1483,44 @@ function StringTrim(s: string): string
 // `unicode-scalar` profile verifies under: byte-identical to what was always emitted.
 const STRING_TRIM_SCALAR = STRING_TRIM.replace(/\\u([0-9A-F]{4})/g, "\\U{$1}");
 
-const STRING_TO_LOWER = `function StringToLower(s: string): string
-  ensures |StringToLower(s)| == |s|
+// `s.toLowerCase()` / `s.toUpperCase()` apply JavaScript's full Unicode case
+// mapping (UnicodeData plus SpecialCasing): non-ASCII letters change and the
+// length can change ("ß".toUpperCase() is "SS", "İ".toLowerCase() has length 2).
+// The helpers are therefore axioms that fix only the all-ASCII case, where
+// JavaScript maps exactly A-Z <-> a-z and leaves every other character alone.
+// Any other input has an unconstrained (but deterministic) result.
+const STRING_IS_ASCII = `predicate StringIsAscii(s: string)
+{
+  forall i :: 0 <= i < |s| ==> (s[i] as int) < 128
+}`;
+
+const STRING_TO_LOWER = `function AsciiToLower(s: string): string
+  ensures |AsciiToLower(s)| == |s|
   decreases |s|
 {
   if |s| == 0 then ""
   else
     var c := s[0];
     var lower := if 'A' <= c <= 'Z' then (c - 'A' + 'a') as char else c;
-    [lower] + StringToLower(s[1..])
-}`;
+    [lower] + AsciiToLower(s[1..])
+}
 
-const STRING_TO_UPPER = `function StringToUpper(s: string): string
-  ensures |StringToUpper(s)| == |s|
+function {:axiom} StringToLower(s: string): string
+  ensures StringIsAscii(s) ==> StringToLower(s) == AsciiToLower(s)`;
+
+const STRING_TO_UPPER = `function AsciiToUpper(s: string): string
+  ensures |AsciiToUpper(s)| == |s|
   decreases |s|
 {
   if |s| == 0 then ""
   else
     var c := s[0];
     var upper := if 'a' <= c <= 'z' then (c - 'a' + 'A') as char else c;
-    [upper] + StringToUpper(s[1..])
-}`;
+    [upper] + AsciiToUpper(s[1..])
+}
+
+function {:axiom} StringToUpper(s: string): string
+  ensures StringIsAscii(s) ==> StringToUpper(s) == AsciiToUpper(s)`;
 
 // `String.fromCharCode(n)` — the inverse of `s.charCodeAt(i)`'s `(s[i] as int)`
 // in the UTF-16 code-unit model selected by dafny-commands.ts. LemmaScript
@@ -1621,6 +1665,7 @@ const PREAMBLE_CODE: [string, string | (() => string)][] = [
   ["JSStringLt", JS_STRING_LT],
   ["CeilReal", CEIL_REAL],
   ["FloorReal", FLOOR_REAL],
+  ["IsSafeIntegerReal", IS_SAFE_INTEGER_REAL],
   ["SeqIndexOf", SEQ_INDEX_OF],
   ["SeqFindIndex", SEQ_FIND_INDEX],
   ["SeqFindLastIndex", SEQ_FIND_LAST_INDEX],
@@ -1643,6 +1688,7 @@ const PREAMBLE_CODE: [string, string | (() => string)][] = [
   ["SeqSort", SEQ_SORT],
   ["SeqSortBy", SEQ_SORT_BY],
   ["StringTrim", () => isUtf16() ? STRING_TRIM : STRING_TRIM_SCALAR],
+  ["StringIsAscii", STRING_IS_ASCII],
   ["StringToLower", STRING_TO_LOWER],
   ["StringToUpper", STRING_TO_UPPER],
   ["StringFromCharCode", () => isUtf16() ? STRING_FROM_CHAR_CODE : STRING_FROM_CHAR_CODE_SCALAR],
@@ -1750,11 +1796,11 @@ function resolveTy(ty: Ty): Ty {
 
 /** Constructor names come from source strings (string-union values like
  *  "spec-pure", discriminated-union tags), which may contain characters no
- *  TS identifier has; map those to `_` before the ordinary escaping. A
- *  collision after mapping fails loudly in Dafny (duplicate constructor)
- *  rather than silently merging. */
+ *  TS identifier has. Sanitize only the candidate spelling, keeping the original
+ *  literal as the cache key so distinct literals cannot collapse onto one entry.
+ *  Identifier-shaped tags retain their existing source-name mapping. */
 function dafnyCtorName(name: string): string {
-  return escapeName(name.replace(/[^A-Za-z0-9_'?]/g, "_"));
+  return _userDafnyNames.get(name) ?? escapeGeneratedName(name, name.replace(/[^A-Za-z0-9_'?]/g, "_"));
 }
 
 function qualifyCtor(name: string, type?: string): string {

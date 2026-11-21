@@ -1,6 +1,6 @@
 # LemmaScript — Implementation Specification
 
-**Version:** 0.6.9
+**Version:** 0.6.10
 **Date:** November 2026
 
 Backend-specific details:
@@ -148,7 +148,7 @@ Note: `arr.includes(x)` and `arr.indexOf(x)` are supported natively — no manua
 
 User-defined types (string literal unions, discriminated unions) are generated automatically with the same name as the TS type. No annotation needed or supported for these.
 
-String-literal union members are emitted verbatim as backend constructor names — they must be valid identifiers in the target backend. Avoid operator characters like `"+"` or `"-"` (which Dafny rejects); use word names such as `"Add"`, `"Sub"` instead.
+String-literal union members become datatype constructors. LemmaScript's Dafny backend sanitizes punctuation while caching names by the original literals, appending primes (`'`) when different literals would otherwise produce the same name. Operator literals such as `"==" | "!="` therefore work directly (see [`examples/operatorUnion.ts`](examples/operatorUnion.ts)).
 
 When a variable is Nat-typed:
 - Lean: `arr[i]!` instead of `arr[i.toNat]!`
@@ -484,6 +484,7 @@ With `local`, `SeqFilter` and `SeqAll` replace the corresponding
 | `c ? a : b` | `if c then a else b` | `if c then a else b` |
 | `opt ? f(opt) : undefined` | match on Some/None | `match opt { case Some(v) => Some(f(v)) case None => None }` |
 | `s.indexOf(sub)` | `JSString.indexOf s sub` | `StringIndexOf(s, sub)` |
+| [`s[i]`](examples/stringIndex.ts) (string, in bounds) | `JSString.index s i` | `[s[i]]` (one-element string) |
 | `s.indexOf(sub, from)` | — (rejected) | `StringIndexOfFrom(s, sub, StringSearchPosition(s, from))`; position clamps to `[0, \|s\|]` |
 | `s.lastIndexOf(sub)` | — (rejected) | `StringLastIndexOf(s, sub)` (preamble: `-1` or a match, with no match starting later) |
 | `s.lastIndexOf(sub, from)` | — (rejected) | `StringLastIndexOfFrom(s, sub, StringSearchPosition(s, from))`; position clamps to `[0, \|s\|]` |
@@ -493,8 +494,8 @@ With `local`, `SeqFilter` and `SeqAll` replace the corresponding
 | `s.trim()` | — | `StringTrim(s)` |
 | `s.trimEnd()` / `s.trimStart()` | — | `StringTrimRight(s)` / `StringTrimLeft(s)` |
 | `s.split(d)` (requires `\|d\| > 0`) | — | `StringSplit(s, d)` (axiomatic preamble: `1 <= \|res\| <= \|s\| + 1`) |
-| `s.toLowerCase()` | — | `StringToLower(s)` |
-| `s.toUpperCase()` | — | `StringToUpper(s)` |
+| [`s.toLowerCase()`](examples/asciiCase.ts) | — | `StringToLower(s)` (axiomatic preamble: specified only for ASCII `s`) |
+| [`s.toUpperCase()`](examples/asciiCase.ts) | — | `StringToUpper(s)` (axiomatic preamble: specified only for ASCII `s`) |
 | `s.includes(sub)` | — | `StringIndexOf(s, sub) >= 0` |
 | `s.startsWith(p)` | — | `\|s\| >= \|p\| && s[..\|p\|] == p` |
 | `s.endsWith(p)` | — | `\|s\| >= \|p\| && s[\|s\|-\|p\|..] == p` |
@@ -530,7 +531,7 @@ With `local`, `SeqFilter` and `SeqAll` replace the corresponding
 | `expr \|\| default` (on number) | if nonzero | `if expr != 0 then expr else default` |
 | `expr \|\| default` (on array) | `expr` (arrays are always truthy) | `expr` (arrays are always truthy) |
 | `expr?.method(args)` | — | `if key in map { ... }` |
-| `expr as T` | stripped | stripped |
+| `expr as T` | stripped | Preserves named union types on tagged record literals; otherwise stripped ([example](examples/taggedRecordComparisons.ts)) |
 | `null` | `none` | `None` (same as `undefined`) |
 | `//@ skip` (before statement) | — | statement omitted from model |
 | `new Map(arr.map(fn))` | — | loop building `map[]` |
@@ -1144,14 +1145,14 @@ function CeilReal(x: real): int {
 
 ### 6.2 String Literals as Constructors
 
-When a variable has a user-defined type, string literal comparisons map to constructor equality:
+When the expected type is a named string-literal union (e.g., `type State = "idle" | "connecting"`), string literals map to constructors and comparisons map to constructor equality:
 
 | TypeScript | Lean | Dafny |
 |-----------|------|-------|
 | `state === "idle"` | `state = .idle` | `state.idle?` |
 | `"connecting"` (as value) | `.connecting` | `State.connecting` |
 
-The same coercion applies wherever a string literal appears in a user-type context: ternary branches, record fields, return values, and variable assignments.
+The same coercion applies in ternary branches, record fields, return values, call arguments, and variable assignments, including through aliases and optional payloads.
 
 ### 6.3 Discriminated Unions
 

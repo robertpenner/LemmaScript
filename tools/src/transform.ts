@@ -211,17 +211,24 @@ let _pureDefNames: Set<string> = new Set();
  *  `<Union>_<disc>` discriminator function beside its datatype, returning
  *  the source tag strings. Narrowing consumes discriminant *checks*, so this
  *  fires only for surviving reads. Populated during body transforms; drained
- *  into the types file. */
-let _neededKindHelpers = new Map<string, TypeDeclInfo>();
+ *  into the types file. Keyed by union name; each entry holds the helper's
+ *  name, minted on the first read. */
+let _neededKindHelpers = new Map<string, { decl: TypeDeclInfo; name: string }>();
 
-function kindHelperName(decl: TypeDeclInfo): string {
-  return freshName(`${decl.name}_${decl.discriminant}`);
+/** The discriminator function for `decl`, registering it on first use. */
+function kindHelperFor(decl: TypeDeclInfo): string {
+  let helper = _neededKindHelpers.get(decl.name);
+  if (!helper) {
+    helper = { decl, name: freshName(`${decl.name}_${decl.discriminant}`) };
+    _neededKindHelpers.set(decl.name, helper);
+  }
+  return helper.name;
 }
 
-function kindHelperDecl(decl: TypeDeclInfo): Decl {
+function kindHelperDecl({ decl, name }: { decl: TypeDeclInfo; name: string }): Decl {
   return {
     kind: "def",
-    name: kindHelperName(decl),
+    name,
     typeParams: [],
     params: [{ name: "t", type: { kind: "user", name: decl.name } }],
     returnType: { kind: "string" },
@@ -788,8 +795,7 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
         // returns the source tag strings. Narrowing consumes discriminant
         // *checks*; this catches reads that survive as values.
         if (decl?.variants && decl.discriminant && decl.discriminant !== "__isArray__") {
-          _neededKindHelpers.set(decl.name, decl);
-          return { kind: "app", fn: kindHelperName(decl), args: [lowerExpr(e.obj, binds)] };
+          return { kind: "app", fn: kindHelperFor(decl), args: [lowerExpr(e.obj, binds)] };
         }
       }
       // Union destructor: `x.field` where x is a discriminated union and `field`

@@ -23,10 +23,12 @@
  * Unwrapped-optional check. A violation is reported when
  * - an access path is optional by declaration but `resolve` stamped it
  *   non-optional (it would be emitted as the raw `Option`), or
- * - an optional value is the receiver of a field or index read, an operand of
- *   arithmetic (`+ - * / % **`, unary `-`), one of two optional operands of
- *   a relational comparison, or an argument for a parameter whose resolved
- *   type is a primitive or a collection, or
+ * - an optional value is the receiver of a field or index read, an index
+ *   operand (plain or `?.[]`), a `for…of` iterable, an operand of arithmetic
+ *   (`+ - * / % **`, unary `-`), one of two optional operands of a relational
+ *   comparison, an argument for a parameter whose resolved type is a primitive
+ *   or a collection, or the value returned from a function or lambda whose
+ *   return type is a primitive or a collection, or
  * - an arithmetic node stamped optional is an operand of a comparison
  *   (`=== !== < <= > >=`). Arithmetic never yields an optional; the stamp is
  *   left over from before narrow bound its operand, and `transform` lowers the
@@ -36,20 +38,31 @@
  * side is optional), one side of a relational comparison (lowered the same
  * way), the left of `??` and the receiver of `?.`, a `someMatch` scrutinee,
  * boolean positions (truthiness), arguments for optional, user-typed or
- * unresolved parameters, and stored values.
+ * unresolved parameters, return values of optional, user-typed or unresolved
+ * type, and stored values. A `let` initializer is a stored value: `resolve`
+ * gives the `let` the initializer's optional type even under a non-optional
+ * annotation, so a fault shows where the local is used.
  *
  * Binder-collision check. A violation is reported when a `someMatch` binder
  * - equals an identifier in the user's source, or
  * - reuses the name of an enclosing `someMatch` binder whose scrutinee is a
  *   different access path (or is not an access path), which would shadow the
  *   outer value.
+ *
+ * Scrutinee-assignment check. A violation is reported for an assignment inside
+ * the `Some` arm of a `someMatch` whose target is the scrutinee path or a
+ * prefix of it (`b` for a match on `b.v`). `transform` substitutes the binder
+ * for the scrutinee path throughout the arm, so every later read sees the old
+ * value, and the assigned value is not wrapped in `Some`. A name rebound by an
+ * inner `let`, `for…of` name or lambda parameter is a new variable and is not
+ * the scrutinee.
  */
 
 import type { TExpr, TStmt, TModule, TFunction, Ty } from "./typedir.js";
 import type { FieldInfo, TypeDeclInfo } from "./types.js";
 import { parseTsType } from "./types.js";
 
-export type NarrowCheck = "unwrapped-optional" | "binder-collision";
+export type NarrowCheck = "unwrapped-optional" | "binder-collision" | "scrutinee-assignment";
 
 export interface NarrowViolation {
   check: NarrowCheck;
@@ -60,11 +73,14 @@ export interface NarrowViolation {
   detail: string;
 }
 
-interface Binding { binder: string; path: string | null }
+/** `live` is false once an inner declaration rebinds the root of `path`. */
+interface Binding { binder: string; path: string | null; live: boolean }
 
 interface Scope {
   types: Map<string, Ty>;
   binders: Binding[];
+  /** Return type that a `return` in this scope must produce; null when unknown. */
+  returnTy: Ty | null;
 }
 
 interface Ctx {
@@ -98,7 +114,7 @@ export function checkNarrowedModule(mod: TModule, userNames: ReadonlySet<string>
     }
   }
   for (const c of mod.constants) {
-    walkExpr(c.value, { types: new Map(globals), binders: [] }, { mod, fn: c.name, userNames, out });
+    walkExpr(c.value, { types: new Map(globals), binders: [], returnTy: null }, { mod, fn: c.name, userNames, out });
   }
   return out;
 }
@@ -109,13 +125,13 @@ function checkFunction(fn: TFunction, label: string, className: string | null, g
   for (const p of fn.params) types.set(p.name, p.ty);
   if (className !== null) types.set("this", { kind: "user", name: className });
   const ctx: Ctx = { mod, fn: label, userNames, out };
-  const scope: Scope = { types, binders: [] };
+  const scope: Scope = { types, binders: [], returnTy: null };
   for (const r of fn.requires) walkExpr(r, scope, ctx);
   if (fn.decreases) walkExpr(fn.decreases, scope, ctx);
-  const post: Scope = { types: new Map(types), binders: [] };
+  const post: Scope = { types: new Map(types), binders: [], returnTy: null };
   post.types.set("\\result", fn.returnTy);
   for (const e of fn.ensures) walkExpr(e, post, ctx);
-  walkStmts(fn.body, { types: new Map(types), binders: [] }, ctx);
+  walkStmts(fn.body, { types: new Map(types), binders: [], returnTy: fn.returnTy }, ctx);
 }
 
 // ── Declared types ──────────────────────────────────────────
@@ -206,18 +222,28 @@ function withBinder(scope: Scope, binder: string, binderTy: Ty, scrutinee: TExpr
     // Facts about the scrutinee's subpaths came from the optional value; keep them.
     types.set(path, binderTy);
   }
-  return { types, binders: [...scope.binders, { binder, path }] };
+  return { types, binders: [...scope.binders, { binder, path, live: true }], returnTy: scope.returnTy };
 }
 
-function extend(scope: Scope, names: { name: string; ty: Ty }[]): Scope {
-  if (names.length === 0) return scope;
+function extend(scope: Scope, names: { name: string; ty: Ty }[], returnTy = scope.returnTy): Scope {
+  if (names.length === 0 && returnTy === scope.returnTy) return scope;
   const types = new Map(scope.types);
   for (const n of names) {
     types.set(n.name, n.ty);
     // A rebound name hides any facts about its old subpaths.
     for (const k of [...types.keys()]) if (k.startsWith(`${n.name}.`)) types.delete(k);
   }
-  return { types, binders: scope.binders };
+  const rebound = (path: string | null) => path !== null && names.some(n => path === n.name || path.startsWith(`${n.name}.`));
+  const binders = scope.binders.map(b => b.live && rebound(b.path) ? { ...b, live: false } : b);
+  return { types, binders, returnTy };
+}
+
+function checkAssignment(target: string, scope: Scope, ctx: Ctx): void {
+  const bound = scope.binders.find(b => b.live && b.path !== null && (b.path === target || b.path.startsWith(`${target}.`)));
+  if (bound) {
+    report(ctx, "scrutinee-assignment", target,
+      `assignment to ${target} inside the Some arm for ${bound.path}; later reads in the arm use the binder's old value`);
+  }
 }
 
 function walkExpr(e: TExpr, scope: Scope, ctx: Ctx): void {
@@ -242,6 +268,7 @@ function walkExpr(e: TExpr, scope: Scope, ctx: Ctx): void {
     }
     case "index":
       requireUnwrapped(e.obj, "an index receiver", scope, ctx);
+      requireUnwrapped(e.idx, "an index operand", scope, ctx);
       walkExpr(e.obj, scope, ctx);
       walkExpr(e.idx, scope, ctx);
       return;
@@ -278,7 +305,7 @@ function walkExpr(e: TExpr, scope: Scope, ctx: Ctx): void {
       for (const x of e.elems) walkExpr(x, scope, ctx);
       return;
     case "lambda":
-      walkStmts(e.body, extend(scope, e.params), ctx);
+      walkStmts(e.body, extend(scope, e.params, e.ty.kind === "fn" ? e.ty.result : null), ctx);
       return;
     case "conditional":
       walkExpr(e.cond, scope, ctx);
@@ -289,7 +316,10 @@ function walkExpr(e: TExpr, scope: Scope, ctx: Ctx): void {
       walkExpr(e.obj, scope, ctx);
       for (const step of e.chain) {
         if (step.kind === "call") for (const a of step.args) walkExpr(a, scope, ctx);
-        if (step.kind === "index") walkExpr(step.idx, scope, ctx);
+        if (step.kind === "index") {
+          requireUnwrapped(step.idx, "an index operand", scope, ctx);
+          walkExpr(step.idx, scope, ctx);
+        }
       }
       return;
     case "nullish":
@@ -334,9 +364,13 @@ function walkStmt(s: TStmt, scope: Scope, ctx: Ctx): Scope {
       walkExpr(s.init, scope, ctx);
       return extend(scope, [{ name: s.name, ty: s.ty }]);
     case "assign": case "ghostAssign":
+      checkAssignment(s.target, scope, ctx);
       walkExpr(s.value, scope, ctx);
       return scope;
     case "return":
+      if (scope.returnTy && CONCRETE_PARAM.has(scope.returnTy.kind)) {
+        requireUnwrapped(s.value, `a return value of type ${scope.returnTy.kind}`, scope, ctx);
+      }
       walkExpr(s.value, scope, ctx);
       return scope;
     case "expr":
@@ -365,6 +399,7 @@ function walkStmt(s: TStmt, scope: Scope, ctx: Ctx): Scope {
       walkStmts(s.defaultBody, scope, ctx);
       return scope;
     case "forof": {
+      requireUnwrapped(s.iterable, "a for…of iterable", scope, ctx);
       walkExpr(s.iterable, scope, ctx);
       const inner = extend(scope, s.names.map((name, i) => ({ name, ty: s.nameTypes[i] ?? { kind: "unknown" } })));
       for (const inv of s.invariants) walkExpr(inv, inner, ctx);

@@ -95,8 +95,11 @@ The Dafny emitter auto-injects helper functions when needed. Each is emitted at 
 | `MathAbs` / `MathMin` / `MathMax` | `Math.abs/min/max` (int args) | Scalar integer abs/min/max |
 | `MathAbsReal` / `MathMinReal` / `MathMaxReal` | `Math.abs/min/max` (any real arg) | Scalar real abs/min/max; int/nat operands coerced with `as real` |
 | `MaxOfSeq` / `MinOfSeq` | `Math.max(...s)` / `Math.min(...s)` | Aggregate over a sequence (requires `\|s\| > 0`) |
+| `MaxOfSeqReal` / `MinOfSeqReal` | `Math.max(...s)` / `Math.min(...s)` (any real segment) | Real aggregate (requires `\|s\| > 0`); integral positional arguments coerced with `as real`, integral array segments with `SeqIntToReal` |
 | `Pow2` / `BitAnd` | `<<` / `>>` / `&` on `bigint` | Bitwise ops as arithmetic |
 | `NatToString` / `IntToString` | `` `${n}` `` template literal (nat / signed int) | Number-to-digit-string for interpolation (`IntToString` prefixes `-`) |
+
+`Math.min(a)` / `Math.max(a)` lower to `a`; three or more positional arguments fold left through `MathMin` / `MathMax` (or the `Real` variants). The result is `real` if any operand is `real`, `nat` only if every operand is `nat`, and otherwise `int`. Zero-argument calls (which return `Infinity` / `-Infinity`) and `bigint` operands are rejected.
 
 **Sequence:**
 

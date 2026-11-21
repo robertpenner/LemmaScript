@@ -254,6 +254,22 @@ function buildMatchPattern(variantName: string, fields: { name: string }[], scop
   return pCtor(variantName, ...fields.map(f => matchBinder(f.name, scopePrefix)));
 }
 
+/** Lower the `arrayConcat` tree of a Math.max/min spread. Array-literal
+ *  segments (positional arguments) always lower to sequences, even when their
+ *  element types differ; when `real`, integral elements and integral array
+ *  segments are coerced to real. */
+function lowerSpreadSeq(e: TExpr, real: boolean, binds: Stmt[] | null): Expr {
+  if (e.kind === "binop" && e.op === "arrayConcat")
+    return { kind: "binop", op: "arrayConcat", left: lowerSpreadSeq(e.left, real, binds), right: lowerSpreadSeq(e.right, real, binds) };
+  if (e.kind === "arrayLiteral")
+    return { kind: "arrayLiteral", elems: e.elems.map((el): Expr => {
+      const lowered = lowerExpr(el, binds);
+      return real && isIntegral(el.ty) ? { kind: "toReal", expr: lowered } : lowered;
+    }) };
+  const lowered = lowerExpr(e, binds);
+  return real && e.ty.kind === "array" && isIntegral(e.ty.elem) ? { kind: "app", fn: "SeqIntToReal", args: [lowered] } : lowered;
+}
+
 const _forofCounters = new Map<string, number>();
 function isNat(ty: Ty): boolean { return ty.kind === "nat"; }
 function isIntegral(ty: Ty): boolean { return ty.kind === "int" || ty.kind === "nat"; }
@@ -899,6 +915,19 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
           });
           return { kind: "app", fn: real ? `${fn}Real` : fn, args };
         }
+        // Unary min/max is the identity; three or more arguments fold left
+        // through the two-argument helper.
+        if ((e.fn.field === "min" || e.fn.field === "max") && e.args.length === 0)
+          throw new Error(`Math.${e.fn.field}() with no arguments is not representable in idealized mode`);
+        if ((e.fn.field === "min" || e.fn.field === "max") && e.args.length !== 2) {
+          const real = e.ty.kind === "real";
+          const args = e.args.map((arg): Expr => {
+            const lowered = lowerExpr(arg, binds);
+            return real && isIntegral(arg.ty) ? { kind: "toReal", expr: lowered } : lowered;
+          });
+          const helper = (e.fn.field === "min" ? "MathMin" : "MathMax") + (real ? "Real" : "");
+          return args.slice(1).reduce((acc, arg): Expr => ({ kind: "app", fn: helper, args: [acc, arg] }), args[0]);
+        }
       }
       // Math.ceil(x): CeilReal on real args, identity on int
       if (e.fn.kind === "field" && e.fn.field === "ceil" && e.fn.obj.kind === "var" && e.fn.obj.name === "Math" && e.args.length === 1) {
@@ -985,6 +1014,14 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
       }
       if (e.fn.kind !== "var")
         throw new Error(`Unsupported call expression: ${e.fn.kind}`);
+      // Math.max/min spread (extract's MaxOfSeq/MinOfSeq rewrite): lower the
+      // concat tree so positional-argument segments stay sequences, and use the
+      // real helpers with coerced integral segments when the result is real.
+      if ((e.fn.name === "MaxOfSeq" || e.fn.name === "MinOfSeq") && e.args.length === 1
+          && (e.ty.kind === "int" || e.ty.kind === "real")) {
+        const real = e.ty.kind === "real";
+        return { kind: "app", fn: real ? `${e.fn.name}Real` : e.fn.name, args: [lowerSpreadSeq(e.args[0], real, binds)] };
+      }
       const prefix = e.callKind === "spec-pure" && _opts.backend === "lean" ? "Pure." : "";
       return { kind: "app", fn: prefix + e.fn.name, args: e.args.map(a => lowerExpr(a, binds)) };
     }

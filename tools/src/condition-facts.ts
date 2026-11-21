@@ -21,7 +21,7 @@
  */
 
 import type { TExpr, TStmt, Ty } from "./typedir.js";
-import { freshName, freshNameWhere, isUserName } from "./names.js";
+import { freshNameWhere, isUserName } from "./names.js";
 import type { TypeDecls } from "./typedecls.js";
 import { unionDeclOfTy, discriminantOf } from "./typedecls.js";
 import { builtinSpec } from "./builtins.js";
@@ -111,7 +111,7 @@ export function presentFact(cond: TExpr): PresentFact | null {
     const innerTy = cond.expr.ty.inner;
     const hint = binderHintFor(e);
     if (hint === null) return null;
-    return { scrutinee: e, innerTy, negated: true, binder: freshName(hint), truthiness: true };
+    return { scrutinee: e, innerTy, negated: true, binder: hint, truthiness: true };
   }
   if (cond.kind !== "binop" || (cond.op !== "!==" && cond.op !== "===")) {
     // Bare optional truthiness: `if (e)` where e: T | undefined — true iff e is
@@ -119,7 +119,7 @@ export function presentFact(cond: TExpr): PresentFact | null {
     if (cond.ty.kind === "optional") {
       const hint = binderHintFor(cond);
       if (hint === null) return null;
-      return { scrutinee: cond, innerTy: cond.ty.inner, negated: false, binder: freshName(hint), truthiness: true };
+      return { scrutinee: cond, innerTy: cond.ty.inner, negated: false, binder: hint, truthiness: true };
     }
     return null;
   }
@@ -131,7 +131,7 @@ export function presentFact(cond: TExpr): PresentFact | null {
   if (!e || e.ty.kind !== "optional") return null;
   const hint = binderHintFor(e);
   if (hint === null) return null;
-  return { scrutinee: e, innerTy: e.ty.inner, negated: cond.op === "===", binder: freshName(hint), truthiness: false };
+  return { scrutinee: e, innerTy: e.ty.inner, negated: cond.op === "===", binder: hint, truthiness: false };
 }
 
 /** Which types have falsy values in JS (`0`, `""`, `false`); everything else

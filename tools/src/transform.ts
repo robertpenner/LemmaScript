@@ -6,7 +6,7 @@
  */
 
 import type { TExpr, TStmt, TModule, Ty } from "./typedir.js";
-import { tyEqual } from "./typedir.js";
+import { isBigInt, tyEqual } from "./typedir.js";
 import type { Expr, Stmt, Decl, Module, FnDef, FnDefByMethod, FnMethod, MatchArm, ConstDecl, MatchPattern } from "./ir.js";
 import { anyExprInStmts, pWild, pCtor, pLiteral, patternBinders, patternBinds, patternCtor } from "./ir.js";
 import type { TypeDeclInfo, VariantInfo } from "./types.js";
@@ -41,6 +41,7 @@ function mapExpr(e: Expr, f: (e: Expr) => Expr | null): Expr {
     case "toInt": return { ...e, expr: r(e.expr) };
     case "toReal": return { ...e, expr: r(e.expr) };
     case "index": return { ...e, arr: r(e.arr), idx: r(e.idx) };
+    case "stringIndex": return { ...e, str: r(e.str), idx: r(e.idx) };
     case "tupleLiteral": return { ...e, elems: e.elems.map(r) };
     case "tupleProj": return { ...e, obj: r(e.obj) };
     case "record": return { ...e, spread: e.spread ? r(e.spread) : null, fields: e.fields.map(fi => ({ ...fi, value: r(fi.value) })) };
@@ -808,6 +809,9 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
       return { kind: "field", obj: transformExpr(e.obj), field: e.field, datatypeField: isRecordType(e.obj.ty) };
 
     case "index": {
+      if (e.obj.ty.kind === "string") {
+        return { kind: "stringIndex", str: lowerExpr(e.obj, binds), idx: lowerExpr(e.idx, binds) };
+      }
       const idx = transformExpr(e.idx);
       if (e.obj.ty.kind === "tuple") {
         // resolve guarantees a numeric-literal index here; project at that slot.
@@ -861,7 +865,19 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
       // model, so the JS bound -(2^53 - 1) <= n <= 2^53 - 1 must be stated.
       if (e.fn.kind === "field" && e.fn.obj.kind === "var" && e.fn.obj.name === "Number" &&
           e.fn.field === "isSafeInteger" && e.args.length === 1 && isIntegral(e.args[0].ty)) {
-        if (e.args[0].ty.kind === "int" && e.args[0].ty.big) return { kind: "bool", value: false };
+        if (isBigInt(e.args[0].ty)) {
+          // The result is false, but JS still evaluates the argument. Keep
+          // lifted method calls and pure expressions' proof obligations.
+          const value = lowerExpr(e.args[0], binds);
+          const result: Expr = { kind: "bool", value: false };
+          if (value.kind === "var" || value.kind === "bigint") return result;
+          const name = freshName("_safeIntegerArg");
+          if (binds) {
+            binds.push({ kind: "let", name, type: e.args[0].ty, mutable: false, value });
+            return result;
+          }
+          return { kind: "let", name, type: e.args[0].ty, value, body: result };
+        }
         const n = lowerExpr(e.args[0], binds);
         const max = 9007199254740991;
         return {
@@ -869,6 +885,12 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
           left: { kind: "binop", op: "≤", left: { kind: "num", value: -max }, right: n },
           right: { kind: "binop", op: "≤", left: n, right: { kind: "num", value: max } },
         };
+      }
+      // Number.isSafeInteger(x) on a real: check integrality and safe range via
+      // a preamble predicate.
+      if (e.fn.kind === "field" && e.fn.obj.kind === "var" && e.fn.obj.name === "Number" &&
+          e.fn.field === "isSafeInteger" && e.args.length === 1 && e.args[0].ty.kind === "real") {
+        return { kind: "app", fn: "IsSafeIntegerReal", args: [lowerExpr(e.args[0], binds)] };
       }
       // Math.abs/min/max preserve the resolved numeric type. Mixed operands
       // need explicit int/nat→real coercions, just like real binary operations.

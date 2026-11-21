@@ -237,6 +237,72 @@ test("an assignment to the scrutinee of an enclosing Some arm is flagged", () =>
   assert.deepEqual(details(shadowed), []);
 });
 
+test("an assignment below the scrutinee path writes into the Option and is flagged", () => {
+  const below = check([{ name: "b", ty: opt(BOX) }], [match(v("b", opt(BOX)), "_b_val", BOX, [assign("b.v", num(1)), ret(num(0))])]);
+  assert.deepEqual(details(below), [
+    "scrutinee-assignment: b.v -- assignment to b.v inside the Some arm for b; transform emits it as a field update on the Option",
+  ]);
+});
+
+const undef: TExpr = { kind: "var", name: "undefined", ty: { kind: "void" } };
+const local = (body: TStmt[]): TStmt[] =>
+  [letS("o", opt(INT), v("p", opt(INT))), match(v("o", opt(INT)), "_o_val", INT, body)];
+
+test("clearing a local scrutinee in its Some arm is flagged only when the arm reads it afterwards", () => {
+  const params = [{ name: "p", ty: opt(INT) }];
+  assert.deepEqual(details(check(params, local([assign("o", undef), ret(num(1))]))), []);
+  assert.deepEqual(details(check(params, local([assign("o", v("p", opt(INT))), ret(num(1))]))), []);
+  const readAfter = "scrutinee-assignment: o -- read of o after it was reassigned inside the Some arm for o; transform reads the binder's old value";
+  assert.deepEqual(details(check(params, local([assign("o", undef), ret(bin("+", v("o", INT), v("o", INT)))]))), [readAfter]);
+  assert.deepEqual(details(check(params, local([assign("o", undef), ret(v("_o_val", INT))]))), [
+    "scrutinee-assignment: _o_val -- read of o after it was reassigned inside the Some arm for o; transform reads the binder's old value",
+  ]);
+  const nestedMatch = local([assign("o", undef), match(v("o", opt(INT)), "_o_val2", INT, [ret(num(1))])]);
+  assert.deepEqual(details(check(params, nestedMatch)), [readAfter]);
+  // A loop body or lambda may run again after the assignment, so the deferral does not apply there.
+  const loop: TStmt = { kind: "while", cond: { kind: "bool", value: true, ty: BOOL }, invariants: [], decreases: null, doneWith: null,
+    body: [assign("o", undef)] };
+  assert.deepEqual(details(check(params, local([loop, ret(num(0))]))), [
+    "scrutinee-assignment: o -- assignment to o inside the Some arm for o; later reads in the arm use the binder's old value",
+  ]);
+  // transform gives a parameter assigned inside a match arm no mutable copy.
+  const param = check([{ name: "o", ty: opt(INT) }], [match(v("o", opt(INT)), "_o_val", INT, [assign("o", undef), ret(num(1))])]);
+  assert.equal(param.length, 1);
+});
+
+test("an optional value assigned to a primitive or collection target is flagged", () => {
+  const params = [{ name: "o", ty: opt(INT) }, { name: "b", ty: BOX }];
+  assert.deepEqual(details(check(params, [letS("r", INT, num(0)), assign("r", v("o", opt(INT))), ret(v("r", INT))])), [
+    "unwrapped-optional: o -- optional value used as an assigned value of type int",
+  ]);
+  assert.deepEqual(details(check(params, [letS("r", opt(INT), num(0)), assign("r", v("o", opt(INT))), ret(num(0))])), []);
+  assert.deepEqual(details(check(params, [assign("b.v", v("o", opt(INT))), ret(num(0))])), []);
+  assert.deepEqual(details(check(params, [letS("r", INT, num(0)),
+    match(v("o", opt(INT)), "_o_val", INT, [assign("r", v("o", INT))]), ret(v("r", INT))])), []);
+});
+
+test("assignment checks cover ghost assignments, rebinding, multi-level prefixes and nested lambdas", () => {
+  const params = [{ name: "o", ty: opt(INT) }];
+  const arm = (body: TStmt[]) => [match(v("o", opt(INT)), "_o_val", INT, body), ret(num(0))];
+  assert.equal(check(params, arm([{ kind: "ghostAssign", target: "o", value: num(5) }])).length, 1);
+  const forOf: TStmt = { kind: "forof", names: ["o"], nameTypes: [INT], iterable: v("xs", ARR), invariants: [], doneWith: null,
+    body: [assign("o", num(1))] };
+  assert.deepEqual(details(check([...params, { name: "xs", ty: ARR }], arm([forOf]))), []);
+  const lambda = (ps: { name: string; ty: Ty }[], body: TStmt[]): TStmt =>
+    ({ kind: "expr", expr: { kind: "lambda", params: ps, body, ty: { kind: "fn", params: ps.map(p => p.ty), result: INT } } });
+  assert.deepEqual(details(check(params, arm([lambda([{ name: "o", ty: INT }], [assign("o", num(1)), ret(v("o", INT))])]))), []);
+  assert.deepEqual(details(check(params, arm([lambda([], [ret(v("o", INT))])]))), []);
+  const deep = (target: string) => check([{ name: "a", ty: BOX }],
+    [match(fld(fld(v("a", BOX), "b", BOX), "v", opt(INT)), "_a_b_v_val", INT, [assign(target, num(1))]), ret(num(0))]);
+  for (const target of ["a", "a.b"]) {
+    assert.deepEqual(details(deep(target)), [
+      `scrutinee-assignment: ${target} -- assignment to ${target} inside the Some arm for a.b.v; later reads in the arm use the binder's old value`,
+    ]);
+  }
+  const chain: TExpr = { kind: "optChain", obj: v("a", opt(ARR)), chain: [{ kind: "index", idx: v("i", INT), ty: opt(INT) }], ty: opt(INT) };
+  assert.deepEqual(details(check([{ name: "a", ty: opt(ARR) }, { name: "i", ty: INT }], [ret(chain)], [], opt(INT))), []);
+});
+
 // ── Compiled modules ────────────────────────────────────────
 
 function narrowed(source: SourceFile, options = undefined as Parameters<typeof extractModule>[1]) {
@@ -249,7 +315,7 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
 // Fixtures that exist to show extraction rejecting a construct.
 const EXPECTED_EXTRACTION_FAILURES = ["tools/fixtures/unpaired-surrogate.ts", "tools/fixtures/unsupported-extraction.ts"];
 
-test("narrow output for every example and fixture passes both checks", () => {
+test("narrow output for every example and fixture passes the checks", () => {
   const files = ["examples", "tools/fixtures"].flatMap(dir =>
     readdirSync(path.join(root, dir)).filter(f => f.endsWith(".ts")).map(f => `${dir}/${f}`));
   const projects = new SourceProjects();
@@ -294,7 +360,7 @@ export function guardThenCompare(x: number, o?: number): boolean { if (o === und
 export function nestedOrReturn(b: Box): number { if (b.inner === undefined || b.inner.value === undefined) return -1; return b.inner.value; }
 export function nestedOrCompare(x: number, b: Box): number { if (b.inner === undefined || b.inner.value === undefined || x < b.inner.value) return 1; return 0; }
 `;
-test("the && / || chain shapes fixed by midspiral/LemmaScript#242 pass both checks", () => {
+test("the && / || chain shapes fixed by midspiral/LemmaScript#242 pass the checks", () => {
   const project = new Project({ compilerOptions: { strict: true, target: ScriptTarget.ESNext, lib: ["lib.esnext.d.ts"] }, useInMemoryFileSystem: true });
   const source = project.createSourceFile("chain.ts", chainSource);
   assert.deepEqual(project.getPreEmitDiagnostics().map(d => d.getMessageText()), []);
@@ -302,12 +368,14 @@ test("the && / || chain shapes fixed by midspiral/LemmaScript#242 pass both chec
   assert.deepEqual(checkNarrowedModule(mod, userNames), []);
 });
 
-// Sources compiled at revision 4fa92c1 for robertpenner/LemmaScript#33. Each faulty
-// function emits Dafny that `dafny resolve` rejects or that reads a stale binder;
-// each clean function emits correct Dafny.
+// Sources compiled for robertpenner/LemmaScript#33 (compiler unchanged since 4fa92c1).
+// Each faulty function either emits Dafny that `dafny resolve` rejects or, for
+// `receiver`, `clearThenRead` and `clearInLoop`, makes transform throw "nullish
+// reached transform"; each clean function emits Dafny that `dafny resolve` accepts.
 const positionPrelude = `
 export interface Box { v?: number }
 export interface Bag { xs?: number[] }
+export interface Cell { v: number }
 `;
 const faultySource = positionPrelude + `
 export function looseIdx(a: number[], i?: number): number { if (i != null && i >= 0 && i < a.length) return a[i]; return 0; }
@@ -324,6 +392,13 @@ export function staleLocal(p?: number): number { let o = p; if (o !== undefined)
 export function staleLoop(p?: number): number { let o = p; let n = 0; if (o !== undefined) { while (n < 3) { o = n; n = n + 1; } return o; } return 0; }
 export function receiver(b: Box): number { if (b.v !== undefined) { b = { v: 7 }; return b.v ?? 0; } return 0; }
 export function assignOutside(p?: number): number { let o = p; if (o === undefined) { o = 5; } return o; }
+export function typeofIdx(a: number[], i?: number): number { if (typeof i === "number" && i < a.length) return a[i]; return 0; }
+export function assignBelow(p?: Cell): number { let c = p; if (c !== undefined) { c.v = 1; return c.v; } return 0; }
+export function assignVal(o?: number): number { let r = 0; if (o != null) { const y = o; r = y; } return r; }
+export function clearThenRead(p?: number): number { let o = p; if (o !== undefined) { o = undefined; return o ?? 7; } return 0; }
+export function clearThenTest(p?: number): number { let o = p; let t = 0; if (o !== undefined) { o = undefined; t = o === undefined ? 1 : 2; } return t; }
+export function clearInLoop(p?: number): number { let o = p; let s = 0; let n = 0; if (o !== undefined) { while (n < 2) { s = s + (o ?? 0); o = undefined; n = n + 1; } } return s; }
+export function clearField(b: Box): number { let c = b; let t = 0; if (c.v !== undefined) { t = c.v; c.v = undefined; } return t; }
 `;
 const cleanSource = positionPrelude + `
 export function andIdx(a: number[], i?: number): number { if (i !== undefined && i >= 0 && i < a.length) return a[i]; return 0; }
@@ -348,6 +423,7 @@ export function letLater(o?: number): number { let y = 0; if (o !== undefined) {
 export function retOpt(o?: number): number | undefined { return o; }
 export function assignAfterArm(p?: number): number { let o = p; if (o !== undefined) { return o + 1; } o = 3; return 0; }
 export function assignOther(p?: number): number { let o = p; let r = 0; if (o !== undefined) { r = o + 1; } return r; }
+export function clearAfter(p?: number): number { let o = p; let t = 0; if (o !== undefined) { t = t + o; o = undefined; } return t; }
 `;
 
 function compileSource(text: string) {
@@ -363,10 +439,12 @@ test("index, for…of, let, return and scrutinee-assignment faults from compiled
   for (const x of checkNarrowedModule(mod, userNames)) byFn.set(x.fn, [...byFn.get(x.fn) ?? [], `${x.check}: ${x.expr} -- ${x.detail}`]);
   const flagged = (fn: string, detail: string) =>
     assert.ok((byFn.get(fn) ?? []).some(d => d.includes(detail)), `${fn}: expected "${detail}", got ${JSON.stringify(byFn.get(fn))}`);
-  for (const fn of ["looseIdx", "notEqIdx", "whileIdx"]) flagged(fn, "optional value used as an index operand");
+  for (const fn of ["looseIdx", "notEqIdx", "whileIdx", "typeofIdx"]) flagged(fn, "optional value used as an index operand");
   flagged("looseFor", "optional value used as a for…of iterable");
   for (const fn of ["notEqLet", "looseLetRet", "looseRet", "assignOutside"]) flagged(fn, "optional value used as a return value of type int");
-  for (const fn of ["assignInArm", "assignField", "assignEarly", "staleLocal", "staleLoop", "receiver"]) flagged(fn, "scrutinee-assignment");
+  flagged("assignVal", "optional value used as an assigned value of type int");
+  for (const fn of ["assignInArm", "assignField", "assignEarly", "staleLocal", "staleLoop", "receiver", "assignBelow",
+    "clearThenRead", "clearThenTest", "clearInLoop", "clearField"]) flagged(fn, "scrutinee-assignment");
 });
 
 test("index, for…of, let, return and assignment shapes narrow supports pass the checks", () => {

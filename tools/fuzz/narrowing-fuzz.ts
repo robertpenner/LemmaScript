@@ -19,8 +19,13 @@
  *   npm run fuzz:narrowing -- --file DIR/1.ts     run the oracles on a saved module
  *
  * Defaults: seed 1, 150 runs per round, stop after 12 classes or 9 minutes.
- * `--positions` limits the statement forms generated (names in POSITIONS),
+ * `--positions` chooses the statement forms generated (names in POSITIONS),
  * for example to search past a known bug in `&&`/`||` chains used as values.
+ * The default is DEFAULT_POSITIONS. The forms added later (an index operand, a
+ * `for…of` iterable, a typed `let`, and an assignment to the narrowed value)
+ * run only when named, because adding them to the default would change the
+ * module every recorded `--seed`/`--path` replay generates. `assignScrutinee`
+ * currently fails on every module (a known compiler bug in the self-run bug log).
  * The replay command printed for each class includes any `--positions` used.
  * `--minutes` is checked between fast-check runs, so one slow `dafny resolve`
  * call can overrun it.
@@ -65,10 +70,11 @@ const PARAMS: Record<string, string> = {
   n: "n: number | null", a: "a: Box", o: "o?: number", p: "p?: number", a_b: "a_b?: number", box: "box?: Box",
 };
 
-const POSITIONS = [
+const DEFAULT_POSITIONS = [
   "returnAnd", "constAnd", "callArg", "returnOr", "ifThen", "ifElse", "ternaryBool",
   "ternaryValue", "ifValue", "earlyReturnOr", "guardThenUse", "nestedIf", "constTernary",
 ] as const;
+const POSITIONS = [...DEFAULT_POSITIONS, "indexValue", "forOfIterable", "typedLet", "assignScrutinee"] as const;
 type Position = typeof POSITIONS[number];
 const BOOL_POSITIONS: ReadonlySet<Position> = new Set(["returnAnd", "constAnd", "callArg", "returnOr"]);
 
@@ -111,6 +117,9 @@ function renderFn(spec: FnSpec, name: string): string {
   const cond = [`x < ${term}`, `${term} + 1 > x`, `${term} > 0`, `${term} - x > 0`, `idn(${term}) > x`][spec.use];
   const value = [term, `${term} + 1`, `${term} - x`, `idn(${term})`, `${term} * 2`][spec.use];
 
+  // Spare guard flag: guards use at most five of the six.
+  const ysGuard = spec.truthy[5] ? "ys" : "ys !== undefined";
+
   let nested = `return ${value};`;
   for (const g of [...present].reverse()) nested = `if (${g}) {\n${indent(nested)}\n}`;
 
@@ -128,10 +137,16 @@ function renderFn(spec: FnSpec, name: string): string {
     guardThenUse: `if (${lacks}) return -1;\nreturn ${value};`,
     nestedIf: `${nested}\nreturn -1;`,
     constTernary: `const y = ${has} ? ${value} : -1;\nreturn y;`,
+    indexValue: `if (${has}) {\n  return xs[${term}];\n}\nreturn -1;`,
+    forOfIterable: `if (${has} && ${ysGuard}) {\n  let s = ${value};\n  for (const y of ys) {\n    s = s + y;\n  }\n  return s;\n}\nreturn -1;`,
+    typedLet: `if (${has}) {\n  const y: number = ${value};\n  return y;\n}\nreturn -1;`,
+    assignScrutinee: `let w = ${has} ? ${term} : undefined;\nif (w !== undefined) {\n  w = w + x;\n  return w;\n}\nreturn -1;`,
   };
 
   const roots = new Set(guards.map(g => g.path.split(".")[0]));
-  const params = ["x: number", ...Object.keys(PARAMS).filter(r => roots.has(r)).map(r => PARAMS[r])];
+  const params = ["x: number", ...(spec.position === "indexValue" ? ["xs: number[]"] : []),
+    ...Object.keys(PARAMS).filter(r => roots.has(r)).map(r => PARAMS[r]),
+    ...(spec.position === "forOfIterable" ? ["ys?: number[]"] : [])];
   const returns = BOOL_POSITIONS.has(spec.position) ? "boolean" : "number";
   const ensures = spec.ensures ? `//@ ensures ${has} ==> ${cond}\n` : "";
   return `export function ${name}(${params.join(", ")}): ${returns} {\n${indent(ensures + body[spec.position])}\n}`;
@@ -165,7 +180,7 @@ const counts = { modules: 0, dafnyCalls: 0 };
 function normalize(message: string): string {
   return message
     .replace(/\b_[A-Za-z0-9_]*\b/g, "_")
-    .replace(/\b(f\d+|o|p|n|a_b|box|x)\b|\ba(?=\.)/g, "v")
+    .replace(/\b(f\d+|o|p|n|a_b|box|x|xs|ys|w)\b|\ba(?=\.)/g, "v")
     .replace(/\d+/g, "N")
     .trim();
 }
@@ -241,7 +256,7 @@ const { values: args } = parseArgs({
     seed: { type: "string", default: "1" },
     runs: { type: "string", default: "150" },
     classes: { type: "string", default: "12" },
-    positions: { type: "string", default: POSITIONS.join(",") },
+    positions: { type: "string", default: DEFAULT_POSITIONS.join(",") },
     minutes: { type: "string", default: "9" },
     out: { type: "string" },
     path: { type: "string" },
@@ -264,7 +279,7 @@ function main(): number {
   const seed = Number(args.seed);
   const numRuns = Number(args.runs);
   const positions = args.positions.split(",").map(p => p.trim()) as Position[];
-  const unknown = positions.filter(p => !POSITIONS.includes(p));
+  const unknown = positions.filter(p => !(POSITIONS as readonly string[]).includes(p));
   if (unknown.length > 0) {
     console.error(`unknown positions: ${unknown.join(", ")}; choose from ${POSITIONS.join(", ")}`);
     return 2;
@@ -292,7 +307,7 @@ function main(): number {
   const seen = new Set<string>();
   let rejections = 0;
   let stop = "class limit reached";
-  const positionsArg = args.positions === POSITIONS.join(",") ? "" : ` --positions ${args.positions}`;
+  const positionsArg = args.positions === DEFAULT_POSITIONS.join(",") ? "" : ` --positions ${args.positions}`;
 
   for (let round = 0; seen.size < Number(args.classes); round++) {
     const remaining = deadline - Date.now();

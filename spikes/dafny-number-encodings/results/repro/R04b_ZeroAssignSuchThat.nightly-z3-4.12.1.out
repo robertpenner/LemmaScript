@@ -1,0 +1,40 @@
+Encountered internal compilation exception: Exception of type 'Cce+UnreachableException' was thrown.
+repro/R04b_ZeroAssignSuchThat.dfy(4,7): Error: Internal error occurred during verification: Exception of type 'Cce+UnreachableException' was thrown.
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TranslateLiteralExpr(LiteralExpr literalExpr)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TranslateBinaryExpr(BinaryExpr binaryExpr)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
+    at Microsoft.Dafny.BoogieGenerator.GenerateAndCheckGuesses(IOrigin tok, List`1 bvars, List`1 bounds, Expression expr, Attributes triggerAttributes, Boolean autoTriggerSearchFailed, BoogieStmtListBuilder builder, ExpressionTranslator etran)
+    at Microsoft.Dafny.BoogieGenerator.TrStmt(Statement stmt, BoogieStmtListBuilder builder, Variables locals, ExpressionTranslator etran)
+    at Microsoft.Dafny.BoogieGenerator.TrVarDeclStmt(VarDeclStmt varDeclStmt, BoogieStmtListBuilder builder, Variables locals, ExpressionTranslator etran)
+    at Microsoft.Dafny.BoogieGenerator.TrStmt(Statement stmt, BoogieStmtListBuilder builder, Variables locals, ExpressionTranslator etran)
+    at Microsoft.Dafny.BoogieGenerator.TrStmtList(List`1 stmts, BoogieStmtListBuilder builder, Variables locals, ExpressionTranslator etran, TokenRange scopeRange, Boolean processLabels)
+    at Microsoft.Dafny.BoogieGenerator.TrStmt(Statement stmt, BoogieStmtListBuilder builder, Variables locals, ExpressionTranslator etran)
+    at Microsoft.Dafny.BoogieGenerator.TrMethodBody(MethodOrConstructor m, BoogieStmtListBuilder builder, Variables localVariables, ExpressionTranslator etran)
+    at Microsoft.Dafny.BoogieGenerator.AddMethodImpl(MethodOrConstructor m, Procedure proc, Boolean wellformednessProc)
+    at Microsoft.Dafny.BoogieGenerator.AddMethod_Top(MethodOrConstructor m, Boolean isByMethod, Boolean includeAllMethods)
+    at Microsoft.Dafny.BoogieGenerator.AddClassMembers(TopLevelDeclWithMembers c, Boolean includeAllMethods, Boolean includeInformationAboutType)
+    at Microsoft.Dafny.BoogieGenerator.AddRevealableTypeDecl(RevealableTypeDecl d)
+    at Microsoft.Dafny.BoogieGenerator.DoTranslation(Program p, ModuleDefinition forModule)
+    at Microsoft.Dafny.LanguageServer.Language.DafnyProgramVerifier.<>c__DisplayClass3_0.<GetVerificationTasksAsync>b__0()
+    at System.Threading.Tasks.Task`1.InnerInvoke()
+    at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+ --- End of stack trace from previous location ---
+    at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+    at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)
+ --- End of stack trace from previous location ---
+    at Microsoft.Dafny.LanguageServer.Language.DafnyProgramVerifier.GetVerificationTasksAsync(ExecutionEngine engine, ResolutionResult resolution, ModuleDefinition moduleDefinition, CancellationToken cancellationToken)
+    at Microsoft.Dafny.Compilation.<>c__DisplayClass60_0.<<VerifyUnverifiedSymbol>b__1>d.MoveNext()
+ --- End of stack trace from previous location ---
+    at Microsoft.Dafny.Compilation.VerifyUnverifiedSymbol(Boolean onlyPrepareVerificationForGutterTests, ICanVerify canVerify, ResolutionResult resolution, Func`2 taskFilter, Nullable`1 randomSeed)
+    at DafnyDriver.Commands.CliCompilation.VerifyAllLazily(Nullable`1 randomSeed)+MoveNext()
+  |
+4 | method Pick(v: fp64)
+  |        ^^^^
+
+Unhandled exception. Cce+UnreachableException: Exception of type 'Cce+UnreachableException' was thrown.
+   at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TranslateLiteralExpr(LiteralExpr literalExpr)
+   at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
+   at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)

@@ -1,0 +1,22 @@
+repro/R12_FromRealLiteral.dfy(4,55): Error: a postcondition could not be proved on this return path
+  |
+4 | lemma FromRealZero() ensures fp64.FromReal(0.0) == 0.0 {}
+  |                                                        ^
+
+repro/R12_FromRealLiteral.dfy(4,48): Related location: this is the postcondition that could not be proved
+  |
+4 | lemma FromRealZero() ensures fp64.FromReal(0.0) == 0.0 {}
+  |                                                 ^^
+
+repro/R12_FromRealLiteral.dfy(5,54): Error: a postcondition could not be proved on this return path
+  |
+5 | lemma FromRealOne() ensures fp64.FromReal(1.0) == 1.0 {}
+  |                                                       ^
+
+repro/R12_FromRealLiteral.dfy(5,47): Related location: this is the postcondition that could not be proved
+  |
+5 | lemma FromRealOne() ensures fp64.FromReal(1.0) == 1.0 {}
+  |                                                ^^
+
+
+Dafny program verifier finished with 3 verified, 2 errors

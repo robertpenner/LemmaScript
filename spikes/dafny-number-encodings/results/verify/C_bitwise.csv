@@ -1,0 +1,79 @@
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+ImulSmall (correctness) (assertion batch 10),Failed,00:00:30.0434409,111786589,0
+AndWithSelf (correctness) (assertion batch 7),Failed,00:00:30.0265764,106222424,0
+OrZeroSpecials (correctness) (assertion batch 4),Failed,00:00:30.0247705,136268482,0
+OrZeroRange (correctness) (assertion batch 2),Failed,00:00:30.0214930,126281132,0
+Bv32RoundTrip (correctness),Failed,00:00:30.0208486,675651835,0
+OrZeroSpecials (correctness) (assertion batch 5),Failed,00:00:30.0201653,130601306,0
+AndExample (correctness) (assertion batch 6),Failed,00:00:30.0172622,109041469,0
+OrZeroIdempotent (correctness),Failed,00:00:30.0162946,109318273,0
+Ushr0Examples (correctness),Failed,00:00:30.0142379,127385716,0
+OrZeroRange (correctness) (assertion batch 3),Failed,00:00:30.0125808,109179470,0
+UshrExample (correctness) (assertion batch 7),Failed,00:00:30.0121911,104139188,0
+ImulExamples (correctness) (assertion batch 2),Failed,00:00:30.0116723,103267371,0
+ImulSmall (correctness) (assertion batch 4),Failed,00:00:26.3796313,127734975,0
+OrZeroOnInt32 (correctness),Failed,00:00:20.8070529,58973977,0
+OrZeroSpecials (correctness) (assertion batch 3),Passed,00:00:20.4992455,94868759,0
+ImulSmall (correctness) (assertion batch 9),Passed,00:00:12.0287920,46314293,0
+ImulExamples (correctness) (assertion batch 1),Failed,00:00:11.3208923,57555184,0
+OrZeroRange (correctness) (assertion batch 1),Passed,00:00:01.8028323,7449968,0
+UshrN (well-formedness) (assertion batch 4),Passed,00:00:00.2052281,1317823,0
+ImulSmall (correctness) (assertion batch 8),Passed,00:00:00.1239640,66832,0
+ImulSmall (correctness) (assertion batch 2),Failed,00:00:00.1087572,296138,0
+ImulSmall (correctness) (assertion batch 7),Passed,00:00:00.0984487,56470,0
+ImulSmall (correctness) (assertion batch 6),Passed,00:00:00.0739605,66647,0
+Ushr0 (well-formedness),Passed,00:00:00.0620432,4209,0
+Imul (well-formedness) (assertion batch 1),Passed,00:00:00.0620381,4209,0
+OrZeroSpecials (correctness) (assertion batch 1),Failed,00:00:00.0595423,75081,0
+And (well-formedness) (assertion batch 4),Passed,00:00:00.0485907,41446,0
+Imul (well-formedness) (assertion batch 3),Passed,00:00:00.0483102,5689,0
+Imul (well-formedness) (assertion batch 2),Passed,00:00:00.0482982,4049,0
+OrZeroSpecials (correctness) (assertion batch 2),Passed,00:00:00.0482770,45887,0
+ImulSmall (correctness) (assertion batch 5),Passed,00:00:00.0467346,56077,0
+And (well-formedness) (assertion batch 1),Passed,00:00:00.0338444,4209,0
+AndWithSelf (correctness) (assertion batch 6),Passed,00:00:00.0301052,26617,0
+AndWithSelf (correctness) (assertion batch 5),Passed,00:00:00.0291749,25973,0
+AndWithSelf (correctness) (assertion batch 2),Passed,00:00:00.0280456,23536,0
+And (well-formedness) (assertion batch 2),Passed,00:00:00.0226100,23536,0
+UshrN (well-formedness) (assertion batch 3),Passed,00:00:00.0214258,22733,0
+UshrN (well-formedness) (assertion batch 2),Passed,00:00:00.0212151,23682,0
+ImulSmall (well-formedness) (assertion batch 7),Passed,00:00:00.0175600,21353,0
+UshrExample (well-formedness) (assertion batch 1),Passed,00:00:00.0139401,4755,0
+MulBound (correctness) (assertion batch 2),Passed,00:00:00.0129854,4650,0
+OrZeroRange (well-formedness) (assertion batch 2),Passed,00:00:00.0123470,13527,0
+OrZeroOnInt32 (well-formedness) (assertion batch 3),Passed,00:00:00.0120469,3115,0
+ImulSmall (well-formedness) (assertion batch 2),Passed,00:00:00.0108857,2712,0
+ImulSmall (well-formedness) (assertion batch 5),Passed,00:00:00.0106816,3862,0
+AndWithSelf (correctness) (assertion batch 3),Passed,00:00:00.0105239,5386,0
+ImulSmall (well-formedness) (assertion batch 4),Passed,00:00:00.0104045,3860,0
+UshrExample (well-formedness) (assertion batch 2),Passed,00:00:00.0093405,4880,0
+OrZeroOnInt32 (well-formedness) (assertion batch 4),Passed,00:00:00.0092752,3437,0
+UshrExample (correctness) (assertion batch 2),Passed,00:00:00.0090330,7894,0
+OrZeroOnInt32 (well-formedness) (assertion batch 1),Passed,00:00:00.0088540,2835,0
+OrZeroOnInt32 (well-formedness) (assertion batch 2),Passed,00:00:00.0087835,2833,0
+AndWithSelf (correctness) (assertion batch 4),Passed,00:00:00.0087513,5532,0
+UshrExample (correctness) (assertion batch 4),Passed,00:00:00.0084006,7012,0
+ImulSmall (well-formedness) (assertion batch 8),Passed,00:00:00.0077903,7755,0
+UshrExample (correctness) (assertion batch 1),Passed,00:00:00.0077076,4218,0
+Bv32RoundTrip (well-formedness),Passed,00:00:00.0074865,4034,0
+UshrN (well-formedness) (assertion batch 1),Passed,00:00:00.0073762,4335,0
+AndExample (correctness) (assertion batch 4),Passed,00:00:00.0067865,7012,0
+And (well-formedness) (assertion batch 3),Passed,00:00:00.0067117,5525,0
+UshrExample (correctness) (assertion batch 3),Passed,00:00:00.0064143,6467,0
+ImulSmall (well-formedness) (assertion batch 6),Passed,00:00:00.0063917,3932,0
+ImulSmall (well-formedness) (assertion batch 11),Passed,00:00:00.0063722,3504,0
+AndWithSelf (correctness) (assertion batch 1),Passed,00:00:00.0060698,4209,0
+UshrExample (correctness) (assertion batch 6),Passed,00:00:00.0057967,6826,0
+ImulSmall (correctness) (assertion batch 3),Passed,00:00:00.0056395,6053,0
+ImulSmall (well-formedness) (assertion batch 9),Passed,00:00:00.0056080,8151,0
+ImulSmall (well-formedness) (assertion batch 10),Passed,00:00:00.0052481,3962,0
+AndExample (correctness) (assertion batch 2),Passed,00:00:00.0050960,7894,0
+ImulSmall (correctness) (assertion batch 1),Passed,00:00:00.0050862,4043,0
+OrZeroRange (well-formedness) (assertion batch 1),Passed,00:00:00.0047546,6481,0
+AndExample (correctness) (assertion batch 3),Passed,00:00:00.0047234,6467,0
+UshrExample (correctness) (assertion batch 5),Passed,00:00:00.0045822,5388,0
+AndExample (correctness) (assertion batch 1),Passed,00:00:00.0043716,4218,0
+AndExample (correctness) (assertion batch 5),Passed,00:00:00.0043220,6833,0
+MulBound (correctness) (assertion batch 1),Passed,00:00:00.0039455,4306,0
+ImulSmall (well-formedness) (assertion batch 1),Passed,00:00:00.0037236,2710,0
+ImulSmall (well-formedness) (assertion batch 3),Passed,00:00:00.0032247,2991,0

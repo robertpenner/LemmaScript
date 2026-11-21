@@ -1,0 +1,18 @@
+CLI: Warning: The file 'corpus/B_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/B_bitwise.dfy(64,6): Error: Verification of 'AndExample' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+64 | lemma AndExample() // @target
+   |       ^^^^^^^^^^
+
+corpus/B_bitwise.dfy(104,6): Error: Verification of 'AndWithSelf' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+    |
+104 | lemma AndWithSelf(a: Num) // @target
+    |       ^^^^^^^^^^^
+
+corpus/B_bitwise.dfy(112,6): Error: Verification of 'Bv32RoundTrip' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+    |
+112 | lemma Bv32RoundTrip(x: int) // @helper
+    |       ^^^^^^^^^^^^^
+
+
+Dafny program verifier finished with 19 verified, 0 errors, 3 time outs

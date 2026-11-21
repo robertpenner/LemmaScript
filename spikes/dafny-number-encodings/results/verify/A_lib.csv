@@ -1,0 +1,9 @@
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+SafeInt (well-formedness) (assertion batch 1),Passed,00:00:00.1592150,3301,0
+JSTruncDiv (well-formedness),Passed,00:00:00.0829604,3406,0
+SafeInt (well-formedness) (assertion batch 2),Passed,00:00:00.0829488,3291,0
+JSRem (well-formedness),Passed,00:00:00.0826830,3406,0
+ToUint32 (well-formedness),Passed,00:00:00.0373166,3474,0
+Sum (well-formedness) (assertion batch 3),Passed,00:00:00.0212892,6838,0
+Sum (well-formedness) (assertion batch 1),Passed,00:00:00.0163480,5335,0
+Sum (well-formedness) (assertion batch 2),Passed,00:00:00.0152721,7523,0

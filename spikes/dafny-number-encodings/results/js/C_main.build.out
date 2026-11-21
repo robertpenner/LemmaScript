@@ -1,0 +1,20 @@
+
+Dafny program verifier did not attempt verification
+Unhandled exception: Cce+UnreachableException: Exception of type 'Cce+UnreachableException' was thrown.
+   at Microsoft.Dafny.Compilers.JavaScriptCodeGenerator.TypeName(Type type, ConcreteSyntaxTree wr, IOrigin tok, MemberDecl member)
+   at Microsoft.Dafny.Compilers.JavaScriptCodeGenerator.TypeName_Companion(Type type, ConcreteSyntaxTree wr, IOrigin tok, MemberDecl member)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.<>c__DisplayClass443_1.<EmitExpr>g__WriteObj|1(ConcreteSyntaxTree w)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.SimpleLvalueImpl.EmitRead(ConcreteSyntaxTree wr)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.EmitExpr(Expression expr, Boolean inLetExprBody, ConcreteSyntaxTree wr, ConcreteSyntaxTree wStmts)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.EmitExpr(Expression expr, Boolean inLetExprBody, ConcreteSyntaxTree wr, ConcreteSyntaxTree wStmts)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.<>c__DisplayClass443_0.<EmitExpr>g__EmitExpr|6(Expression e2, ConcreteSyntaxTree wr2, Boolean inLetExpr, ConcreteSyntaxTree wStmts2)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.CompileFunctionCallExpr(FunctionCallExpr e, ConcreteSyntaxTree wr, Boolean inLetExprBody, ConcreteSyntaxTree wStmts, FCE_Arg_Translator tr, Boolean alreadyCoerced)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.EmitExpr(Expression expr, Boolean inLetExprBody, ConcreteSyntaxTree wr, ConcreteSyntaxTree wStmts)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.EmitExpr(Expression expr, Boolean inLetExprBody, ConcreteSyntaxTree wr, ConcreteSyntaxTree wStmts)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.Expr(Expression expr, Boolean inLetExprBody, ConcreteSyntaxTree wStmts)
+   at Microsoft.Dafny.Compilers.JavaScriptCodeGenerator.EmitPrintStmt(ConcreteSyntaxTree wr, Expression arg)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.TrStmt(Statement stmt, ConcreteSyntaxTree wr, ConcreteSyntaxTree wStmts)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.TrStmtList(IReadOnlyList`1 stmts, ConcreteSyntaxTree writer)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.CompileMethod(Program program, MethodOrConstructor m, IClassWriter cw, Boolean lookasideBody)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.CompileClassMembers(Program program, TopLevelDeclWithMembers c, IClassWriter classWriter)
+   at Microsoft.Dafny.Compilers.SinglePassCodeGenerator.EmitModule(Program program, ConcreteSyntaxTree programNode, ModuleDefinition module)

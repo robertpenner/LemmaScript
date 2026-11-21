@@ -1,0 +1,72 @@
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+LerpInRange (well-formedness) (assertion batch 4),Passed,00:00:00.1233735,19511,0
+LerpInRange (correctness) (assertion batch 1),Passed,00:00:00.1222040,14128,0
+FiniteOps (correctness) (assertion batch 4),Passed,00:00:00.1218953,33421,0
+LerpAtOne (correctness) (assertion batch 7),Passed,00:00:00.1166221,174797,0
+LerpInRange (correctness) (assertion batch 19),Passed,00:00:00.1139125,19498,0
+LerpInRange (correctness) (assertion batch 3),Passed,00:00:00.1130253,18833,0
+LerpInRange (correctness) (assertion batch 18),Passed,00:00:00.1104125,19505,0
+FiniteOps (correctness) (assertion batch 5),Passed,00:00:00.1054015,26960,0
+LerpInRange (well-formedness) (assertion batch 7),Passed,00:00:00.0998267,19571,0
+LerpInRange (correctness) (assertion batch 5),Passed,00:00:00.0992155,19082,0
+LerpInRange (correctness) (assertion batch 4),Passed,00:00:00.0987190,18854,0
+LerpInRange (correctness) (assertion batch 17),Passed,00:00:00.0985159,28955,0
+FiniteOps (well-formedness) (assertion batch 4),Passed,00:00:00.0976912,14083,0
+FiniteOps (well-formedness) (assertion batch 2),Passed,00:00:00.0961217,12046,0
+FiniteOps (well-formedness) (assertion batch 3),Passed,00:00:00.0957362,12049,0
+FiniteOps (well-formedness) (assertion batch 1),Passed,00:00:00.0924283,12043,0
+FiniteOps (well-formedness) (assertion batch 8),Passed,00:00:00.0904715,18601,0
+FiniteOps (correctness) (assertion batch 6),Passed,00:00:00.0890430,27828,0
+LerpInRange (correctness) (assertion batch 2),Passed,00:00:00.0884357,14130,0
+LerpInRange (correctness) (assertion batch 8),Passed,00:00:00.0871647,19352,0
+FiniteOps (correctness) (assertion batch 3),Passed,00:00:00.0859256,23506,0
+FiniteOps (well-formedness) (assertion batch 5),Passed,00:00:00.0837052,14076,0
+FiniteOps (well-formedness) (assertion batch 6),Passed,00:00:00.0833194,14080,0
+MulBetween (correctness) (assertion batch 1),Passed,00:00:00.0817063,3100,0
+LerpInRange (correctness) (assertion batch 11),Passed,00:00:00.0812498,25620,0
+FiniteOps (well-formedness) (assertion batch 9),Passed,00:00:00.0790043,18605,0
+LerpAtOne (correctness) (assertion batch 1),Passed,00:00:00.0770369,7530,0
+MulBetween (correctness) (assertion batch 2),Passed,00:00:00.0739507,3102,0
+LerpInRange (well-formedness) (assertion batch 8),Passed,00:00:00.0720479,7639,0
+LerpInRange (correctness) (assertion batch 12),Passed,00:00:00.0714582,19486,0
+LerpInRange (well-formedness) (assertion batch 6),Passed,00:00:00.0707889,19898,0
+LerpInRange (correctness) (assertion batch 7),Passed,00:00:00.0700645,19363,0
+LerpInRange (correctness) (assertion batch 13),Passed,00:00:00.0670526,22037,0
+LerpInRange (correctness) (assertion batch 10),Passed,00:00:00.0660599,19381,0
+LerpAtOne (correctness) (assertion batch 4),Passed,00:00:00.0643875,19330,0
+FiniteOps (correctness) (assertion batch 2),Passed,00:00:00.0628170,16156,0
+FiniteOps (well-formedness) (assertion batch 7),Passed,00:00:00.0624098,18626,0
+MulBetween (correctness) (assertion batch 3),Passed,00:00:00.0609557,3857,0
+LerpAtOne (correctness) (assertion batch 5),Passed,00:00:00.0588162,19715,0
+LerpInRange (correctness) (assertion batch 9),Passed,00:00:00.0571437,19372,0
+LerpInRange (correctness) (assertion batch 6),Passed,00:00:00.0548479,19095,0
+LerpInRange (well-formedness) (assertion batch 5),Passed,00:00:00.0542672,19846,0
+LerpAtOne (well-formedness),Passed,00:00:00.0541189,7511,0
+LerpExtremesInB (correctness) (assertion batch 3),Passed,00:00:00.0536379,31959,0
+LerpInRange (correctness) (assertion batch 15),Passed,00:00:00.0526264,26410,0
+MulBetween (correctness) (assertion batch 4),Passed,00:00:00.0518918,3210,0
+LerpInRange (correctness) (assertion batch 14),Passed,00:00:00.0517690,22229,0
+LerpInRange (well-formedness) (assertion batch 2),Passed,00:00:00.0504737,7557,0
+LerpInRange (well-formedness) (assertion batch 3),Passed,00:00:00.0504297,7598,0
+MulBetween (correctness) (assertion batch 5),Passed,00:00:00.0470851,3039,0
+LerpAtOne (correctness) (assertion batch 2),Passed,00:00:00.0442411,7532,0
+BridgeAdd (correctness),Passed,00:00:00.0440210,23666,0
+LerpAtOne (correctness) (assertion batch 3),Passed,00:00:00.0437871,23372,0
+LerpInRange (correctness) (assertion batch 16),Passed,00:00:00.0434550,28549,0
+LerpExtremesInB (correctness) (assertion batch 1),Passed,00:00:00.0433877,9324,0
+MulBetween (correctness) (assertion batch 6),Passed,00:00:00.0403075,3302,0
+MulBetween (correctness) (assertion batch 7),Passed,00:00:00.0380464,4497,0
+IsIntNum (well-formedness) (assertion batch 1),Passed,00:00:00.0361295,6393,0
+LerpAtOne (correctness) (assertion batch 6),Passed,00:00:00.0353400,21290,0
+FiniteOps (correctness) (assertion batch 1),Passed,00:00:00.0334314,14554,0
+MulNonneg (correctness),Passed,00:00:00.0318012,3470,0
+BridgeMul (correctness),Passed,00:00:00.0306996,28489,0
+LerpInRange (well-formedness) (assertion batch 1),Passed,00:00:00.0288980,7555,0
+LerpExtremesInB (correctness) (assertion batch 2),Passed,00:00:00.0263616,9185,0
+FromIntBridge (well-formedness) (assertion batch 1),Passed,00:00:00.0245363,10791,0
+ToIntBridge (well-formedness),Passed,00:00:00.0216775,8933,0
+IsIntNum (well-formedness) (assertion batch 2),Passed,00:00:00.0180037,6395,0
+BridgeRoundTrip (correctness),Passed,00:00:00.0173998,10278,0
+BridgeRoundTrip (well-formedness) (assertion batch 1),Passed,00:00:00.0168854,10749,0
+FromIntBridge (well-formedness) (assertion batch 2),Passed,00:00:00.0162213,11162,0
+BridgeRoundTrip (well-formedness) (assertion batch 2),Passed,00:00:00.0160096,10841,0

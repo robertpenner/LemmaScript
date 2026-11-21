@@ -1,0 +1,22 @@
+repro/R09_TwoAsInt.dfy(7,2): Error: Verification of 'TwoAsInt' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+  |
+7 |   assert 2.0 as fp64 as int == 2;
+  |   ^^^^^^
+
+repro/R09_TwoAsInt.dfy(7,21): Error: Verification of 'TwoAsInt' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+  |
+7 |   assert 2.0 as fp64 as int == 2;
+  |                      ^^
+
+repro/R09_TwoAsInt.dfy(12,2): Error: Verification of 'TwoAsReal' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+12 |   assert 2.0 as fp64 as real == 2.0;
+   |   ^^^^^^
+
+repro/R09_TwoAsInt.dfy(12,21): Error: Verification of 'TwoAsReal' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+12 |   assert 2.0 as fp64 as real == 2.0;
+   |                      ^^
+
+
+Dafny program verifier finished with 2 verified, 0 errors, 4 time outs

@@ -1,0 +1,6 @@
+TestResult.DisplayName,TestResult.Outcome,TestResult.Duration,TestResult.ResourceCount,RandomSeed
+MathTrunc (well-formedness) (assertion batch 2),Passed,00:00:00.0742594,2554,0
+MathRound (well-formedness),Passed,00:00:00.0724432,2963,0
+MathTrunc (well-formedness) (assertion batch 1),Passed,00:00:00.0723623,2546,0
+ToInt32 (well-formedness) (assertion batch 1),Passed,00:00:00.0723258,2710,0
+ToInt32 (well-formedness) (assertion batch 2),Passed,00:00:00.0163175,3679,0

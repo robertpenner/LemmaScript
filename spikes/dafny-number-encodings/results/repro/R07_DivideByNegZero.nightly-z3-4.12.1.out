@@ -1,0 +1,7 @@
+repro/R07_DivideByNegZero.dfy(19,9): Error: possible division by zero
+   |
+19 |   r := x / z;
+   |          ^
+
+
+Dafny program verifier finished with 7 verified, 1 error

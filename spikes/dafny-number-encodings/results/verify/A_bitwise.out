@@ -1,0 +1,19 @@
+CLI: Warning: The file 'corpus/A_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/A_bitwise.dfy(78,29): Error: Verification of 'Bv32RoundTrip' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+78 |   ensures (x as bv32) as int == x
+   |                              ^^
+
+corpus/A_bitwise.dfy(90,2): Error: Verification of 'Examples' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+90 |   assert And(-1, 255) == 255;
+   |   ^^^^^^
+
+corpus/A_bitwise.dfy(92,2): Error: Verification of 'Examples' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+92 |   assert UshrN(-1, 28) == 15;
+   |   ^^^^^^
+
+
+Dafny program verifier finished with 73 verified, 0 errors, 3 time outs
+Results File: results/verify/A_bitwise.csv

@@ -95,6 +95,12 @@ function declOf(decls: seq<TypeDeclInfo>, name: string): Option<TypeDeclInfo>
   SeqFind(decls, (d: TypeDeclInfo) => (d.name == name))
 }
 
+lemma declOf_ensures(decls: seq<TypeDeclInfo>, name: string)
+  ensures (match declOf(decls, name) { case Some(i_result_val) => ((i_result_val.name == name) && (i_result_val in decls)) case None => true })
+  ensures ((match declOf(decls, name) { case Some(i_) => false case None => true }) ==> forall d: TypeDeclInfo :: ((d in decls) ==> (d.name != name)))
+{
+}
+
 function declOfKind(decls: seq<TypeDeclInfo>, name: string, kinds: seq<string>): Option<TypeDeclInfo>
 {
   var d := declOf(decls, name);
@@ -106,6 +112,18 @@ function declOfKind(decls: seq<TypeDeclInfo>, name: string, kinds: seq<string>):
         Option.None
     case None =>
       Option.None
+  }
+}
+
+lemma declOfKind_ensures(decls: seq<TypeDeclInfo>, name: string, kinds: seq<string>)
+  ensures (match declOfKind(decls, name, kinds) { case Some(i_result_val) => (((i_result_val.name == name) && (i_result_val.kind in kinds)) && (i_result_val in decls)) case None => true })
+  ensures ((match declOfKind(decls, name, kinds) { case Some(i_) => false case None => true }) ==> namesUnique(decls) ==> forall d: TypeDeclInfo :: ((d in decls) ==> (d.name == name) ==> !((d.kind in kinds))))
+{
+  var f := declOf(decls, name);
+  if f.Some? && namesUnique(decls) {
+    forall d | d in decls && d.name == name ensures d == f.value {
+      namesUniqueSame(decls, d, f.value);
+    }
   }
 }
 
@@ -124,12 +142,26 @@ function declOfDotted(decls: seq<TypeDeclInfo>, name: string): Option<TypeDeclIn
   }
 }
 
+lemma declOfDotted_ensures(decls: seq<TypeDeclInfo>, name: string)
+  ensures ((match declOf(decls, name) { case Some(i_) => true case None => false }) ==> (declOfDotted(decls, name) == declOf(decls, name)))
+  ensures (match declOfDotted(decls, name) { case Some(i_result_val) => ((i_result_val in decls) && ((i_result_val.name == name) || ((StringLastIndexOf(name, ".") >= 0) && (i_result_val.name == name[(StringLastIndexOf(name, ".") + 1)..])))) case None => true })
+  ensures ((match declOfDotted(decls, name) { case Some(i_) => false case None => true }) ==> forall d: TypeDeclInfo :: ((d in decls) ==> ((d.name != name) && ((StringLastIndexOf(name, ".") < 0) || (d.name != name[(StringLastIndexOf(name, ".") + 1)..])))))
+{
+}
+
 function declOfTy(decls: seq<TypeDeclInfo>, ty: Ty): Option<TypeDeclInfo>
 {
   if ty.user? then
     declOf(decls, tyBaseName(ty.name))
   else
     Option.None
+}
+
+lemma declOfTy_ensures(decls: seq<TypeDeclInfo>, ty: Ty)
+  ensures ((!ty.user?) ==> (match declOfTy(decls, ty) { case Some(i_) => false case None => true }))
+  ensures (match declOfTy(decls, ty) { case Some(i_result_val) => ((ty.user? && (i_result_val.name == tyBaseName(ty.name))) && (i_result_val in decls)) case None => true })
+  ensures (ty.user? ==> (match declOfTy(decls, ty) { case Some(i_) => false case None => true }) ==> forall d: TypeDeclInfo :: ((d in decls) ==> (d.name != tyBaseName(ty.name))))
+{
 }
 
 function unionDeclOfTy(decls: seq<TypeDeclInfo>, ty: Ty): Option<TypeDeclInfo>
@@ -139,6 +171,20 @@ function unionDeclOfTy(decls: seq<TypeDeclInfo>, ty: Ty): Option<TypeDeclInfo>
     d
   else
     Option.None
+}
+
+lemma unionDeclOfTy_ensures(decls: seq<TypeDeclInfo>, ty: Ty)
+  ensures (match unionDeclOfTy(decls, ty) { case Some(i_result_val) => ((((i_result_val.kind == "discriminated-union") && ty.user?) && (i_result_val.name == tyBaseName(ty.name))) && (i_result_val in decls)) case None => true })
+  ensures (ty.user? ==> (match unionDeclOfTy(decls, ty) { case Some(i_) => false case None => true }) ==> namesUnique(decls) ==> forall d: TypeDeclInfo :: ((d in decls) ==> (d.name == tyBaseName(ty.name)) ==> (d.kind != "discriminated-union")))
+{
+  if ty.user? && namesUnique(decls) {
+    var f := declOf(decls, tyBaseName(ty.name));
+    if f.Some? {
+      forall d | d in decls && d.name == tyBaseName(ty.name) ensures d == f.value {
+        namesUniqueSame(decls, d, f.value);
+      }
+    }
+  }
 }
 
 function discriminantOf(decls: seq<TypeDeclInfo>, ty: Ty): Option<string>
@@ -151,7 +197,50 @@ function discriminantOf(decls: seq<TypeDeclInfo>, ty: Ty): Option<string>
   }
 }
 
+lemma discriminantOf_ensures(decls: seq<TypeDeclInfo>, ty: Ty)
+  ensures (match discriminantOf(decls, ty) { case Some(i_result_val) => (ty.user? && exists d: TypeDeclInfo :: ((((d in decls) && (d.kind == "discriminated-union")) && (d.name == tyBaseName(ty.name))) && (match d.discriminant { case Some(i_value) => (i_value == i_result_val) case None => false }))) case None => true })
+{
+}
+
 function declWithVariant(decls: seq<TypeDeclInfo>, ctorOrValue: string): Option<TypeDeclInfo>
 {
   SeqFind(decls, (d: TypeDeclInfo) => (((d.kind == "discriminated-union") || (d.kind == "string-union")) && (match (match d.variants { case Some(i_oc2_val) => Option.Some((exists v :: v in i_oc2_val && (v.name == ctorOrValue))) case None => Option.None }) { case Some(i_value) => (if i_value then i_value else (match (match d.values { case Some(i_oc3_val) => Option.Some((ctorOrValue in i_oc3_val)) case None => Option.None }) { case Some(i_oc4_val) => i_oc4_val case None => false })) case None => (match (match d.values { case Some(i_oc3_val) => Option.Some((ctorOrValue in i_oc3_val)) case None => Option.None }) { case Some(i_oc4_val) => i_oc4_val case None => false }) })))
+}
+
+lemma declWithVariant_ensures(decls: seq<TypeDeclInfo>, ctorOrValue: string)
+  ensures (match declWithVariant(decls, ctorOrValue) { case Some(i_result_val) => ((i_result_val in decls) && ownsVariant(i_result_val, ctorOrValue)) case None => true })
+  ensures ((match declWithVariant(decls, ctorOrValue) { case Some(i_) => false case None => true }) ==> forall d: TypeDeclInfo :: ((d in decls) ==> !(ownsVariant(d, ctorOrValue))))
+{
+}
+
+function namesUnique(decls: seq<TypeDeclInfo>): bool
+{
+  ((|decls| == 0) || (var rest := decls[1..]; (!((exists d :: d in rest && (d.name == decls[0].name))) && namesUnique(rest))))
+}
+
+function ownsVariant(d: TypeDeclInfo, ctorOrValue: string): bool
+{
+  if ((d.kind != "discriminated-union") && (d.kind != "string-union")) then
+    false
+  else
+    var inVariants := (match d.variants { case Some(i_d_variants_val) => (exists v :: v in i_d_variants_val && (v.name == ctorOrValue)) case None => false });
+    var inValues := (match d.values { case Some(i_d_values_val) => (ctorOrValue in i_d_values_val) case None => false });
+    (inVariants || inValues)
+}
+
+// Two same-named members of a unique-names list are the same declaration.
+lemma namesUniqueSame(decls: seq<TypeDeclInfo>, a: TypeDeclInfo, b: TypeDeclInfo)
+  requires namesUnique(decls) && a in decls && b in decls && a.name == b.name
+  ensures a == b
+  decreases |decls|
+{
+  var rest := decls[1..];
+  if a == decls[0] {
+    if b != decls[0] { assert b in rest; }
+  } else if b == decls[0] {
+    assert a in rest;
+  } else {
+    assert a in rest && b in rest;
+    namesUniqueSame(rest, a, b);
+  }
 }

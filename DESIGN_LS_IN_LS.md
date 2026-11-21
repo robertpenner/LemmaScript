@@ -464,16 +464,17 @@ verify structural contracts." Not: "the compiler proves its own
 correctness." At P1/T1: "the compiler executes a generated verified
 implementation of selected passes, with the stated guarantees." Full
 compiler correctness requires P2. Documentation must classify each module's
-P- and T-level accurately.
+P- and T-level accurately. TOOLS.md ("Fork integration checks") lists the
+current level and proved properties of each self-checked module.
 
 ### 8.3 Module portability
 
 | Module | LOC | Target | Notes |
 |---|---|---|---|
-| `ir.ts` | 308 | Prime P0/P1 | Pure datatypes + query walkers; structural recursion sweet spot. |
+| `ir.ts` | 501 | Prime P0/P1 | Pure datatypes + query walkers; structural recursion sweet spot. |
 | `rawir.ts` | 227 | Prime P0/P1 | Pure datatypes; the extract/specparser output surface. |
 | `typedir.ts` | 203 | Prime P0/P1 | Structural `tyEqual` (an improvement anyway). |
-| `typedecls.ts` | 71 | Prime P0/P1 | Total lookups over a declaration list; no state. |
+| `typedecls.ts` | 111 | Prime P0/P1 | Total lookups over a declaration list; no state. |
 | `names.ts` | 56 | Prime P1 | Tiny, real spec content (freshness, keywords). |
 | `builtins.ts` | 175 | P1 after reshaping | Data table + total functions, but `ret` is a function-valued record field — the subset wants a `switch` on `BuiltinId` instead (§5.2). |
 | `condition-facts.ts` | 408 | Prime P1 | Pure detection + materializers; state confined to `CondCtx`. Ports with `narrow`. |

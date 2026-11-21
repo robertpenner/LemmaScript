@@ -332,10 +332,12 @@ const _refsName = (name: string): ExprPred =>
        (e.kind === "constructor" && e.name === name);
 
 export function usesName(e: Expr, name: string): boolean {
+  //@ ensures \result === exprRefs(e).includes(name)
   return anyExpr(e, _refsName(name));
 }
 
 export function usesNameInStmts(stmts: Stmt[], name: string): boolean {
+  //@ ensures \result === stmtListRefs(stmts).includes(name)
   return anyExprInStmts(stmts, _refsName(name));
 }
 
@@ -345,6 +347,7 @@ export function usesNameInStmts(stmts: Stmt[], name: string): boolean {
  *  from `usesNameInStmts` (expression references only): an unread or assign-only
  *  local still duplicate-declares against a method's out-parameter in Dafny. */
 export function bindsNameInStmts(stmts: Stmt[], name: string): boolean {
+  //@ ensures \result === stmtListBinders(stmts).includes(name)
   return stmts.some(s => {
     switch (s.kind) {
       case "let": case "let-bind": case "ghostLet": return s.name === name;
@@ -362,6 +365,137 @@ export function bindsNameInStmts(stmts: Stmt[], name: string): boolean {
  *  referenced in a spec (requires/ensures) or body, *or* bound/targeted anywhere
  *  in the body (an unread local still duplicate-declares). Both emitters share it. */
 export function usesNameInDecl(requires: Expr[], ensures: Expr[], body: Stmt[], name: string): boolean {
+  //@ ensures \result === (exprListRefs(requires).includes(name) || exprListRefs(ensures).includes(name) || stmtListRefs(body).includes(name) || stmtListBinders(body).includes(name))
   return requires.some(e => usesName(e, name)) || ensures.some(e => usesName(e, name))
     || usesNameInStmts(body, name) || bindsNameInStmts(body, name);
+}
+
+// ── Name-query specification (DESIGN_LS_IN_LS.md §8.1) ────────
+//
+// The contracts on `usesName`, `usesNameInStmts`, `bindsNameInStmts` and
+// `usesNameInDecl` are stated against these list-valued definitions, which
+// are written per node kind from the IR types above and do not go through
+// `anyExpr`. A query that skipped a node kind would disagree with them, and
+// Dafny would reject its contract. Nothing in the compiler calls these; lsc
+// translates them with the module so the contracts can name them.
+
+/** Spec: the names `e` references as a variable, called function, or
+ *  constructor, in traversal order with repeats. Includes references inside
+ *  lambda bodies; excludes binders, field names, and method names. */
+export function exprRefs(e: Expr): string[] {
+  switch (e.kind) {
+    case "var": return [e.name];
+    case "num": case "bigint": case "bool": case "str":
+    case "emptyMap": case "emptySet": case "havoc": case "default": return [];
+    case "constructor": return [e.name, ...exprListRefs(e.args)];
+    case "binop": return [...exprRefs(e.left), ...exprRefs(e.right)];
+    case "unop": return exprRefs(e.expr);
+    case "toNat": return exprRefs(e.expr);
+    case "toInt": return exprRefs(e.expr);
+    case "toReal": return exprRefs(e.expr);
+    case "app": return [e.fn, ...exprListRefs(e.args)];
+    case "field": return exprRefs(e.obj);
+    case "index": return [...exprRefs(e.arr), ...exprRefs(e.idx)];
+    case "stringIndex": return [...exprRefs(e.str), ...exprRefs(e.idx)];
+    case "tupleLiteral": return exprListRefs(e.elems);
+    case "tupleProj": return exprRefs(e.obj);
+    case "implies": return [...exprListRefs(e.premises), ...exprRefs(e.conclusion)];
+    case "record": return [...(e.spread ? exprRefs(e.spread) : []), ...fieldListRefs(e.fields)];
+    case "arrayLiteral": return exprListRefs(e.elems);
+    case "arrayRange": return exprRefs(e.length);
+    case "mapLiteral": return entryListRefs(e.entries);
+    case "methodCall": return [...exprRefs(e.obj), ...exprListRefs(e.args)];
+    case "lambda": return stmtListRefs(e.body);
+    case "if": return [...exprRefs(e.cond), ...exprRefs(e.then), ...exprRefs(e.else)];
+    case "match": return [...exprRefs(e.scrutinee), ...armListRefs(e.arms)];
+    case "forall": return exprRefs(e.body);
+    case "exists": return exprRefs(e.body);
+    case "let": return [...exprRefs(e.value), ...exprRefs(e.body)];
+  }
+}
+
+export function exprListRefs(es: Expr[]): string[] {
+  return es.length === 0 ? [] : [...exprRefs(es[0]), ...exprListRefs(es.slice(1))];
+}
+
+export function fieldListRefs(fs: RecordField[]): string[] {
+  return fs.length === 0 ? [] : [...exprRefs(fs[0].value), ...fieldListRefs(fs.slice(1))];
+}
+
+// Map entries and match arms go through a per-element function: Dafny 4.11
+// cannot prove termination of `exprRefs(ens[0].key)` taken straight from the
+// list, but proves each single step (list element, then field).
+export function entryRefs(en: MapEntry): string[] {
+  return [...exprRefs(en.key), ...exprRefs(en.value)];
+}
+
+export function entryListRefs(ens: MapEntry[]): string[] {
+  return ens.length === 0 ? [] : [...entryRefs(ens[0]), ...entryListRefs(ens.slice(1))];
+}
+
+export function armRefs(arm: MatchArm): string[] {
+  return exprRefs(arm.body);
+}
+
+export function armListRefs(arms: MatchArm[]): string[] {
+  return arms.length === 0 ? [] : [...armRefs(arms[0]), ...armListRefs(arms.slice(1))];
+}
+
+/** Spec: the names a statement references, under the same rule as
+ *  `exprRefs`. Assignment targets and binders are not references. */
+export function stmtRefs(s: Stmt): string[] {
+  switch (s.kind) {
+    case "let": return exprRefs(s.value);
+    case "assign": return exprRefs(s.value);
+    case "bind": return exprRefs(s.value);
+    case "let-bind": return exprRefs(s.value);
+    case "return": return exprRefs(s.value);
+    case "ghostLet": return exprRefs(s.value);
+    case "ghostAssign": return exprRefs(s.value);
+    case "assert": return exprRefs(s.expr);
+    case "break": case "continue": return [];
+    case "if": return [...exprRefs(s.cond), ...stmtListRefs(s.then), ...stmtListRefs(s.else)];
+    case "match": return [...exprRefs(s.scrutinee), ...stmtArmListRefs(s.arms)];
+    case "while": return [...exprRefs(s.cond), ...exprListRefs(s.invariants),
+      ...(s.decreasing ? exprRefs(s.decreasing) : []), ...(s.doneWith ? exprRefs(s.doneWith) : []),
+      ...stmtListRefs(s.body)];
+    case "forin": return [...exprRefs(s.bound), ...exprListRefs(s.invariants), ...stmtListRefs(s.body)];
+  }
+}
+
+export function stmtListRefs(ss: Stmt[]): string[] {
+  return ss.length === 0 ? [] : [...stmtRefs(ss[0]), ...stmtListRefs(ss.slice(1))];
+}
+
+export function stmtArmListRefs(arms: StmtMatchArm[]): string[] {
+  return arms.length === 0 ? [] : [...stmtListRefs(arms[0].body), ...stmtArmListRefs(arms.slice(1))];
+}
+
+/** Spec: the names a statement binds or targets: `let`, `let-bind` and
+ *  `ghostLet` names, `assign`, `bind` and `ghostAssign` targets, `for-in`
+ *  indices, and `match`-arm pattern binders, through nested statement
+ *  blocks. Lambda bodies are expressions and are not included. */
+export function stmtBinders(s: Stmt): string[] {
+  switch (s.kind) {
+    case "let": return [s.name];
+    case "let-bind": return [s.name];
+    case "ghostLet": return [s.name];
+    case "assign": return [s.target];
+    case "bind": return [s.target];
+    case "ghostAssign": return [s.target];
+    case "forin": return [s.idx, ...stmtListBinders(s.body)];
+    case "if": return [...stmtListBinders(s.then), ...stmtListBinders(s.else)];
+    case "while": return stmtListBinders(s.body);
+    case "match": return stmtArmListBinders(s.arms);
+    case "return": case "break": case "continue": case "assert": return [];
+  }
+}
+
+export function stmtListBinders(ss: Stmt[]): string[] {
+  return ss.length === 0 ? [] : [...stmtBinders(ss[0]), ...stmtListBinders(ss.slice(1))];
+}
+
+export function stmtArmListBinders(arms: StmtMatchArm[]): string[] {
+  return arms.length === 0 ? []
+    : [...patternBinders(arms[0].pattern), ...stmtListBinders(arms[0].body), ...stmtArmListBinders(arms.slice(1))];
 }

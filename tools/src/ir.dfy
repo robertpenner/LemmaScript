@@ -126,9 +126,21 @@ function usesName(e: Expr, name: string): bool
   anyExpr(e, i_refsName(name))
 }
 
+lemma usesName_ensures(e: Expr, name: string)
+  ensures (usesName(e, name) == (name in exprRefs(e)))
+{
+  refsAgree(e, name);
+}
+
 function usesNameInStmts(stmts: seq<Stmt>, name: string): bool
 {
   anyExprInStmts(stmts, i_refsName(name))
+}
+
+lemma usesNameInStmts_ensures(stmts: seq<Stmt>, name: string)
+  ensures (usesNameInStmts(stmts, name) == (name in stmtListRefs(stmts)))
+{
+  stmtListRefsAgree(stmts, name);
 }
 
 function bindsNameInStmts(stmts: seq<Stmt>, name: string): bool
@@ -136,9 +148,239 @@ function bindsNameInStmts(stmts: seq<Stmt>, name: string): bool
   (exists s :: s in stmts && (match s { case let(i_s_name, i_s_type, i_s_mutable, i_s_value) => (i_s_name == name) case let_bind(i_s_name, i_s_value) => (i_s_name == name) case ghostLet(i_s_name, i_s_type, i_s_value) => (i_s_name == name) case assign(i_s_target, i_s_value) => (i_s_target == name) case bind(i_s_target, i_s_value) => (i_s_target == name) case ghostAssign(i_s_target, i_s_value) => (i_s_target == name) case forin(i_s_idx, i_s_bound, i_s_invariants, i_s_body) => ((i_s_idx == name) || bindsNameInStmts(i_s_body, name)) case if_(i_s_cond, i_s_then, i_s_else) => (bindsNameInStmts(i_s_then, name) || bindsNameInStmts(i_s_else, name)) case while_(i_s_cond, i_s_invariants, i_s_decreasing, i_s_doneWith, i_s_body) => bindsNameInStmts(i_s_body, name) case match_(i_s_scrutinee, i_s_arms) => (exists a :: a in i_s_arms && (patternBinds(a.pattern, name) || bindsNameInStmts(a.body, name))) case _ => false }))
 }
 
+lemma bindsNameInStmts_ensures(stmts: seq<Stmt>, name: string)
+  ensures (bindsNameInStmts(stmts, name) == (name in stmtListBinders(stmts)))
+{
+  bindersAgree(stmts, name);
+}
+
 function usesNameInDecl(requires_: seq<Expr>, ensures_: seq<Expr>, body: seq<Stmt>, name: string): bool
 {
   ((((exists e :: e in requires_ && usesName(e, name)) || (exists e :: e in ensures_ && usesName(e, name))) || usesNameInStmts(body, name)) || bindsNameInStmts(body, name))
+}
+
+lemma usesNameInDecl_ensures(requires_: seq<Expr>, ensures_: seq<Expr>, body: seq<Stmt>, name: string)
+  ensures (usesNameInDecl(requires_, ensures_, body, name) == ((((name in exprListRefs(requires_)) || (name in exprListRefs(ensures_))) || (name in stmtListRefs(body))) || (name in stmtListBinders(body))))
+{
+  assert forall e :: usesName(e, name) == anyExpr(e, i_refsName(name));
+  listRefsAgree(requires_, name);
+  listRefsAgree(ensures_, name);
+  stmtListRefsAgree(body, name);
+  bindersAgree(body, name);
+}
+
+function exprRefs(e: Expr): seq<string>
+{
+  match e {
+    case var_(i_e_name) =>
+      [i_e_name]
+    case num(i_e_value) =>
+      []
+    case bigint(i_e_value) =>
+      []
+    case bool_(i_e_value) =>
+      []
+    case str(i_e_value) =>
+      []
+    case emptyMap =>
+      []
+    case emptySet =>
+      []
+    case havoc(i_e_type) =>
+      []
+    case default(i_e_type) =>
+      []
+    case constructor_(i_e_name, i_e_type, i_e_args) =>
+      ([i_e_name] + exprListRefs(i_e_args))
+    case binop(i_e_op, i_e_left, i_e_right) =>
+      (exprRefs(i_e_left) + exprRefs(i_e_right))
+    case unop(i_e_op, i_e_expr) =>
+      exprRefs(i_e_expr)
+    case toNat(i_e_expr) =>
+      exprRefs(i_e_expr)
+    case toInt(i_e_expr) =>
+      exprRefs(i_e_expr)
+    case toReal(i_e_expr) =>
+      exprRefs(i_e_expr)
+    case app(i_e_fn, i_e_args, i_e_ctorOf) =>
+      ([i_e_fn] + exprListRefs(i_e_args))
+    case field(i_e_obj, i_e_field, i_e_fromUnion, i_e_ctor, i_e_datatypeField) =>
+      exprRefs(i_e_obj)
+    case index(i_e_arr, i_e_idx) =>
+      (exprRefs(i_e_arr) + exprRefs(i_e_idx))
+    case stringIndex(i_e_str, i_e_idx) =>
+      (exprRefs(i_e_str) + exprRefs(i_e_idx))
+    case tupleLiteral(i_e_elems) =>
+      exprListRefs(i_e_elems)
+    case tupleProj(i_e_obj, i_e_index, i_e_arity) =>
+      exprRefs(i_e_obj)
+    case implies(i_e_premises, i_e_conclusion) =>
+      (exprListRefs(i_e_premises) + exprRefs(i_e_conclusion))
+    case record(i_e_spread, i_e_fields, i_e_ctor, i_e_ctorOf) =>
+      ((match i_e_spread { case Some(i_e_spread_val) => exprRefs(i_e_spread_val) case None => [] }) + fieldListRefs(i_e_fields))
+    case arrayLiteral(i_e_elems) =>
+      exprListRefs(i_e_elems)
+    case arrayRange(i_e_length) =>
+      exprRefs(i_e_length)
+    case mapLiteral(i_e_entries) =>
+      entryListRefs(i_e_entries)
+    case methodCall(i_e_obj, i_e_objTy, i_e_method, i_e_args, i_e_monadic) =>
+      (exprRefs(i_e_obj) + exprListRefs(i_e_args))
+    case lambda(i_e_params, i_e_body, i_e_typedParams) =>
+      stmtListRefs(i_e_body)
+    case if_(i_e_cond, i_e_then, i_e_else) =>
+      ((exprRefs(i_e_cond) + exprRefs(i_e_then)) + exprRefs(i_e_else))
+    case match_(i_e_scrutinee, i_e_arms) =>
+      (exprRefs(i_e_scrutinee) + armListRefs(i_e_arms))
+    case forall_(i_e_var, i_e_type, i_e_body) =>
+      exprRefs(i_e_body)
+    case exists_(i_e_var, i_e_type, i_e_body) =>
+      exprRefs(i_e_body)
+    case let(i_e_name, i_e_type, i_e_value, i_e_body) =>
+      (exprRefs(i_e_value) + exprRefs(i_e_body))
+  }
+}
+
+function exprListRefs(es: seq<Expr>): seq<string>
+{
+  if (|es| == 0) then
+    []
+  else
+    (exprRefs(es[0]) + exprListRefs(es[1..]))
+}
+
+function fieldListRefs(fs: seq<RecordField>): seq<string>
+{
+  if (|fs| == 0) then
+    []
+  else
+    (exprRefs(fs[0].value) + fieldListRefs(fs[1..]))
+}
+
+function entryRefs(en: MapEntry): seq<string>
+{
+  (exprRefs(en.key) + exprRefs(en.value))
+}
+
+function entryListRefs(ens: seq<MapEntry>): seq<string>
+{
+  if (|ens| == 0) then
+    []
+  else
+    (entryRefs(ens[0]) + entryListRefs(ens[1..]))
+}
+
+function armRefs(arm: MatchArm): seq<string>
+{
+  exprRefs(arm.body)
+}
+
+function armListRefs(arms: seq<MatchArm>): seq<string>
+{
+  if (|arms| == 0) then
+    []
+  else
+    (armRefs(arms[0]) + armListRefs(arms[1..]))
+}
+
+function stmtRefs(s: Stmt): seq<string>
+{
+  match s {
+    case let(i_s_name, i_s_type, i_s_mutable, i_s_value) =>
+      exprRefs(i_s_value)
+    case assign(i_s_target, i_s_value) =>
+      exprRefs(i_s_value)
+    case bind(i_s_target, i_s_value) =>
+      exprRefs(i_s_value)
+    case let_bind(i_s_name, i_s_value) =>
+      exprRefs(i_s_value)
+    case return_(i_s_value) =>
+      exprRefs(i_s_value)
+    case ghostLet(i_s_name, i_s_type, i_s_value) =>
+      exprRefs(i_s_value)
+    case ghostAssign(i_s_target, i_s_value) =>
+      exprRefs(i_s_value)
+    case assert_(i_s_expr, i_s_assumed) =>
+      exprRefs(i_s_expr)
+    case break_ =>
+      []
+    case continue_ =>
+      []
+    case if_(i_s_cond, i_s_then, i_s_else) =>
+      ((exprRefs(i_s_cond) + stmtListRefs(i_s_then)) + stmtListRefs(i_s_else))
+    case match_(i_s_scrutinee, i_s_arms) =>
+      (exprRefs(i_s_scrutinee) + stmtArmListRefs(i_s_arms))
+    case while_(i_s_cond, i_s_invariants, i_s_decreasing, i_s_doneWith, i_s_body) =>
+      ((((exprRefs(i_s_cond) + exprListRefs(i_s_invariants)) + (match i_s_decreasing { case Some(i_s_decreasing_val) => exprRefs(i_s_decreasing_val) case None => [] })) + (match i_s_doneWith { case Some(i_s_doneWith_val) => exprRefs(i_s_doneWith_val) case None => [] })) + stmtListRefs(i_s_body))
+    case forin(i_s_idx, i_s_bound, i_s_invariants, i_s_body) =>
+      ((exprRefs(i_s_bound) + exprListRefs(i_s_invariants)) + stmtListRefs(i_s_body))
+  }
+}
+
+function stmtListRefs(ss: seq<Stmt>): seq<string>
+{
+  if (|ss| == 0) then
+    []
+  else
+    (stmtRefs(ss[0]) + stmtListRefs(ss[1..]))
+}
+
+function stmtArmListRefs(arms: seq<StmtMatchArm>): seq<string>
+{
+  if (|arms| == 0) then
+    []
+  else
+    (stmtListRefs(arms[0].body) + stmtArmListRefs(arms[1..]))
+}
+
+function stmtBinders(s: Stmt): seq<string>
+{
+  match s {
+    case let(i_s_name, i_s_type, i_s_mutable, i_s_value) =>
+      [i_s_name]
+    case let_bind(i_s_name, i_s_value) =>
+      [i_s_name]
+    case ghostLet(i_s_name, i_s_type, i_s_value) =>
+      [i_s_name]
+    case assign(i_s_target, i_s_value) =>
+      [i_s_target]
+    case bind(i_s_target, i_s_value) =>
+      [i_s_target]
+    case ghostAssign(i_s_target, i_s_value) =>
+      [i_s_target]
+    case forin(i_s_idx, i_s_bound, i_s_invariants, i_s_body) =>
+      ([i_s_idx] + stmtListBinders(i_s_body))
+    case if_(i_s_cond, i_s_then, i_s_else) =>
+      (stmtListBinders(i_s_then) + stmtListBinders(i_s_else))
+    case while_(i_s_cond, i_s_invariants, i_s_decreasing, i_s_doneWith, i_s_body) =>
+      stmtListBinders(i_s_body)
+    case match_(i_s_scrutinee, i_s_arms) =>
+      stmtArmListBinders(i_s_arms)
+    case return_(i_s_value) =>
+      []
+    case break_ =>
+      []
+    case continue_ =>
+      []
+    case assert_(i_s_expr, i_s_assumed) =>
+      []
+  }
+}
+
+function stmtListBinders(ss: seq<Stmt>): seq<string>
+{
+  if (|ss| == 0) then
+    []
+  else
+    (stmtBinders(ss[0]) + stmtListBinders(ss[1..]))
+}
+
+function stmtArmListBinders(arms: seq<StmtMatchArm>): seq<string>
+{
+  if (|arms| == 0) then
+    []
+  else
+    ((patternBinders(arms[0].pattern) + stmtListBinders(arms[0].body)) + stmtArmListBinders(arms[1..]))
 }
 
 function pWild(): MatchPattern
@@ -159,4 +401,196 @@ function pLiteral(value: string): MatchPattern
 function i_refsName(name: string): ExprPred
 {
   (e: Expr) => (((e.var_? && (e.name == name)) || (e.app? && (e.fn == name))) || (e.constructor_? && (e.name == name)))
+}
+
+// ── Name-query proofs (DESIGN_LS_IN_LS.md §8.1) ──────────────
+// Mutual induction: the generic walker `anyExpr` with the `i_refsName`
+// predicate agrees with the list-valued spec `exprRefs` on every node kind.
+
+lemma refsAgree(e: Expr, name: string)
+  ensures anyExpr(e, i_refsName(name)) <==> name in exprRefs(e)
+{
+  match e {
+    case constructor_(_, _, args) => listRefsAgree(args, name);
+    case binop(_, l, r) => refsAgree(l, name); refsAgree(r, name);
+    case unop(_, x) => refsAgree(x, name);
+    case toNat(x) => refsAgree(x, name);
+    case toInt(x) => refsAgree(x, name);
+    case toReal(x) => refsAgree(x, name);
+    case app(_, args, _) => listRefsAgree(args, name);
+    case field(o, _, _, _, _) => refsAgree(o, name);
+    case index(a, i) => refsAgree(a, name); refsAgree(i, name);
+    case stringIndex(x, i) => refsAgree(x, name); refsAgree(i, name);
+    case tupleLiteral(es) => listRefsAgree(es, name);
+    case tupleProj(o, _, _) => refsAgree(o, name);
+    case implies(ps, c) => listRefsAgree(ps, name); refsAgree(c, name);
+    case record(sp, fs, _, _) =>
+      if sp.Some? { refsAgree(sp.value, name); }
+      fieldListRefsAgree(fs, name);
+    case arrayLiteral(es) => listRefsAgree(es, name);
+    case arrayRange(n) => refsAgree(n, name);
+    case mapLiteral(ens) => entryListRefsAgree(ens, name);
+    case methodCall(o, _, _, args, _) => refsAgree(o, name); listRefsAgree(args, name);
+    case lambda(_, body, _) => stmtListRefsAgree(body, name);
+    case if_(c, t, f) => refsAgree(c, name); refsAgree(t, name); refsAgree(f, name);
+    case match_(sc, arms) => refsAgree(sc, name); armListRefsAgree(arms, name);
+    case forall_(_, _, b) => refsAgree(b, name);
+    case exists_(_, _, b) => refsAgree(b, name);
+    case let(_, _, v, b) => refsAgree(v, name); refsAgree(b, name);
+    case _ => {}
+  }
+}
+
+lemma listRefsAgree(es: seq<Expr>, name: string)
+  ensures (exists a :: a in es && anyExpr(a, i_refsName(name))) <==> name in exprListRefs(es)
+{
+  if |es| > 0 {
+    refsAgree(es[0], name);
+    listRefsAgree(es[1..], name);
+    assert forall a :: a in es <==> (a == es[0] || a in es[1..]);
+  }
+}
+
+lemma fieldListRefsAgree(fs: seq<RecordField>, name: string)
+  ensures (exists f :: f in fs && anyExpr(f.value, i_refsName(name))) <==> name in fieldListRefs(fs)
+{
+  if |fs| > 0 {
+    refsAgree(fs[0].value, name);
+    fieldListRefsAgree(fs[1..], name);
+    assert forall f :: f in fs <==> (f == fs[0] || f in fs[1..]);
+  }
+}
+
+lemma entryRefsAgree(en: MapEntry, name: string)
+  ensures (anyExpr(en.key, i_refsName(name)) || anyExpr(en.value, i_refsName(name))) <==> name in entryRefs(en)
+{
+  refsAgree(en.key, name);
+  refsAgree(en.value, name);
+}
+
+lemma entryListRefsAgree(ens: seq<MapEntry>, name: string)
+  ensures (exists en :: en in ens && (anyExpr(en.key, i_refsName(name)) || anyExpr(en.value, i_refsName(name))))
+          <==> name in entryListRefs(ens)
+{
+  if |ens| > 0 {
+    entryRefsAgree(ens[0], name);
+    entryListRefsAgree(ens[1..], name);
+    assert forall en :: en in ens <==> (en == ens[0] || en in ens[1..]);
+  }
+}
+
+lemma armRefsAgree(arm: MatchArm, name: string)
+  ensures anyExpr(arm.body, i_refsName(name)) <==> name in armRefs(arm)
+{
+  refsAgree(arm.body, name);
+}
+
+lemma armListRefsAgree(arms: seq<MatchArm>, name: string)
+  ensures (exists a :: a in arms && anyExpr(a.body, i_refsName(name))) <==> name in armListRefs(arms)
+{
+  if |arms| > 0 {
+    armRefsAgree(arms[0], name);
+    armListRefsAgree(arms[1..], name);
+    assert forall a :: a in arms <==> (a == arms[0] || a in arms[1..]);
+  }
+}
+
+lemma stmtRefsAgree(s: Stmt, name: string)
+  ensures anyExprInStmt(s, i_refsName(name)) <==> name in stmtRefs(s)
+{
+  match s {
+    case let(_, _, _, v) => refsAgree(v, name);
+    case assign(_, v) => refsAgree(v, name);
+    case bind(_, v) => refsAgree(v, name);
+    case let_bind(_, v) => refsAgree(v, name);
+    case return_(v) => refsAgree(v, name);
+    case ghostLet(_, _, v) => refsAgree(v, name);
+    case ghostAssign(_, v) => refsAgree(v, name);
+    case assert_(x, _) => refsAgree(x, name);
+    case if_(c, t, f) => refsAgree(c, name); stmtListRefsAgree(t, name); stmtListRefsAgree(f, name);
+    case match_(sc, arms) => refsAgree(sc, name); stmtArmListRefsAgree(arms, name);
+    case while_(c, invs, d, dw, body) =>
+      refsAgree(c, name);
+      listRefsAgree(invs, name);
+      if d.Some? { refsAgree(d.value, name); }
+      if dw.Some? { refsAgree(dw.value, name); }
+      stmtListRefsAgree(body, name);
+    case forin(_, b, invs, body) =>
+      refsAgree(b, name);
+      listRefsAgree(invs, name);
+      stmtListRefsAgree(body, name);
+    case _ => {}
+  }
+}
+
+lemma stmtListRefsAgree(ss: seq<Stmt>, name: string)
+  ensures anyExprInStmts(ss, i_refsName(name)) <==> name in stmtListRefs(ss)
+{
+  if |ss| > 0 {
+    stmtRefsAgree(ss[0], name);
+    stmtListRefsAgree(ss[1..], name);
+    assert forall s :: s in ss <==> (s == ss[0] || s in ss[1..]);
+    assert anyExprInStmts(ss, i_refsName(name)) ==
+      (anyExprInStmt(ss[0], i_refsName(name)) || anyExprInStmts(ss[1..], i_refsName(name)));
+  }
+}
+
+lemma stmtArmListRefsAgree(arms: seq<StmtMatchArm>, name: string)
+  ensures (exists a :: a in arms && anyExprInStmts(a.body, i_refsName(name))) <==> name in stmtArmListRefs(arms)
+{
+  if |arms| > 0 {
+    stmtListRefsAgree(arms[0].body, name);
+    stmtArmListRefsAgree(arms[1..], name);
+    assert forall a :: a in arms <==> (a == arms[0] || a in arms[1..]);
+  }
+}
+
+// `bindsNameInStmts` agrees with the list-valued spec `stmtListBinders`.
+
+// The per-statement test inside `bindsNameInStmts`, copied from its
+// generated body so the list induction can name it. `bindsNameInStmtsDef`
+// checks that the copy still matches the generated function.
+predicate bindsOne(s: Stmt, name: string)
+{
+  (match s { case let(i_s_name, i_s_type, i_s_mutable, i_s_value) => (i_s_name == name) case let_bind(i_s_name, i_s_value) => (i_s_name == name) case ghostLet(i_s_name, i_s_type, i_s_value) => (i_s_name == name) case assign(i_s_target, i_s_value) => (i_s_target == name) case bind(i_s_target, i_s_value) => (i_s_target == name) case ghostAssign(i_s_target, i_s_value) => (i_s_target == name) case forin(i_s_idx, i_s_bound, i_s_invariants, i_s_body) => ((i_s_idx == name) || bindsNameInStmts(i_s_body, name)) case if_(i_s_cond, i_s_then, i_s_else) => (bindsNameInStmts(i_s_then, name) || bindsNameInStmts(i_s_else, name)) case while_(i_s_cond, i_s_invariants, i_s_decreasing, i_s_doneWith, i_s_body) => bindsNameInStmts(i_s_body, name) case match_(i_s_scrutinee, i_s_arms) => (exists a :: a in i_s_arms && (patternBinds(a.pattern, name) || bindsNameInStmts(a.body, name))) case _ => false })
+}
+
+lemma bindsNameInStmtsDef(ss: seq<Stmt>, name: string)
+  ensures bindsNameInStmts(ss, name) == (exists s :: s in ss && bindsOne(s, name))
+{
+}
+
+lemma bindersAgree(ss: seq<Stmt>, name: string)
+  ensures bindsNameInStmts(ss, name) <==> name in stmtListBinders(ss)
+{
+  bindsNameInStmtsDef(ss, name);
+  if |ss| > 0 {
+    stmtBindersAgree(ss[0], name);
+    bindersAgree(ss[1..], name);
+    bindsNameInStmtsDef(ss[1..], name);
+    assert forall s :: s in ss <==> (s == ss[0] || s in ss[1..]);
+  }
+}
+
+lemma stmtBindersAgree(s: Stmt, name: string)
+  ensures bindsOne(s, name) <==> name in stmtBinders(s)
+{
+  match s {
+    case forin(_, _, _, body) => bindersAgree(body, name);
+    case if_(_, t, f) => bindersAgree(t, name); bindersAgree(f, name);
+    case while_(_, _, _, _, body) => bindersAgree(body, name);
+    case match_(_, arms) => armBindersAgree(arms, name);
+    case _ => {}
+  }
+}
+
+lemma armBindersAgree(arms: seq<StmtMatchArm>, name: string)
+  ensures (exists a :: a in arms && (patternBinds(a.pattern, name) || bindsNameInStmts(a.body, name)))
+          <==> name in stmtArmListBinders(arms)
+{
+  if |arms| > 0 {
+    bindersAgree(arms[0].body, name);
+    armBindersAgree(arms[1..], name);
+    assert forall a :: a in arms <==> (a == arms[0] || a in arms[1..]);
+  }
 }

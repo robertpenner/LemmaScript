@@ -126,9 +126,19 @@ function usesName(e: Expr, name: string): bool
   anyExpr(e, i_refsName(name))
 }
 
+lemma usesName_ensures(e: Expr, name: string)
+  ensures (usesName(e, name) == (name in exprRefs(e)))
+{
+}
+
 function usesNameInStmts(stmts: seq<Stmt>, name: string): bool
 {
   anyExprInStmts(stmts, i_refsName(name))
+}
+
+lemma usesNameInStmts_ensures(stmts: seq<Stmt>, name: string)
+  ensures (usesNameInStmts(stmts, name) == (name in stmtListRefs(stmts)))
+{
 }
 
 function bindsNameInStmts(stmts: seq<Stmt>, name: string): bool
@@ -136,9 +146,233 @@ function bindsNameInStmts(stmts: seq<Stmt>, name: string): bool
   (exists s :: s in stmts && (match s { case let(i_s_name, i_s_type, i_s_mutable, i_s_value) => (i_s_name == name) case let_bind(i_s_name, i_s_value) => (i_s_name == name) case ghostLet(i_s_name, i_s_type, i_s_value) => (i_s_name == name) case assign(i_s_target, i_s_value) => (i_s_target == name) case bind(i_s_target, i_s_value) => (i_s_target == name) case ghostAssign(i_s_target, i_s_value) => (i_s_target == name) case forin(i_s_idx, i_s_bound, i_s_invariants, i_s_body) => ((i_s_idx == name) || bindsNameInStmts(i_s_body, name)) case if_(i_s_cond, i_s_then, i_s_else) => (bindsNameInStmts(i_s_then, name) || bindsNameInStmts(i_s_else, name)) case while_(i_s_cond, i_s_invariants, i_s_decreasing, i_s_doneWith, i_s_body) => bindsNameInStmts(i_s_body, name) case match_(i_s_scrutinee, i_s_arms) => (exists a :: a in i_s_arms && (patternBinds(a.pattern, name) || bindsNameInStmts(a.body, name))) case _ => false }))
 }
 
+lemma bindsNameInStmts_ensures(stmts: seq<Stmt>, name: string)
+  ensures (bindsNameInStmts(stmts, name) == (name in stmtListBinders(stmts)))
+{
+}
+
 function usesNameInDecl(requires_: seq<Expr>, ensures_: seq<Expr>, body: seq<Stmt>, name: string): bool
 {
   ((((exists e :: e in requires_ && usesName(e, name)) || (exists e :: e in ensures_ && usesName(e, name))) || usesNameInStmts(body, name)) || bindsNameInStmts(body, name))
+}
+
+lemma usesNameInDecl_ensures(requires_: seq<Expr>, ensures_: seq<Expr>, body: seq<Stmt>, name: string)
+  ensures (usesNameInDecl(requires_, ensures_, body, name) == ((((name in exprListRefs(requires_)) || (name in exprListRefs(ensures_))) || (name in stmtListRefs(body))) || (name in stmtListBinders(body))))
+{
+}
+
+function exprRefs(e: Expr): seq<string>
+{
+  match e {
+    case var_(i_e_name) =>
+      [i_e_name]
+    case num(i_e_value) =>
+      []
+    case bigint(i_e_value) =>
+      []
+    case bool_(i_e_value) =>
+      []
+    case str(i_e_value) =>
+      []
+    case emptyMap =>
+      []
+    case emptySet =>
+      []
+    case havoc(i_e_type) =>
+      []
+    case default(i_e_type) =>
+      []
+    case constructor_(i_e_name, i_e_type, i_e_args) =>
+      ([i_e_name] + exprListRefs(i_e_args))
+    case binop(i_e_op, i_e_left, i_e_right) =>
+      (exprRefs(i_e_left) + exprRefs(i_e_right))
+    case unop(i_e_op, i_e_expr) =>
+      exprRefs(i_e_expr)
+    case toNat(i_e_expr) =>
+      exprRefs(i_e_expr)
+    case toInt(i_e_expr) =>
+      exprRefs(i_e_expr)
+    case toReal(i_e_expr) =>
+      exprRefs(i_e_expr)
+    case app(i_e_fn, i_e_args, i_e_ctorOf) =>
+      ([i_e_fn] + exprListRefs(i_e_args))
+    case field(i_e_obj, i_e_field, i_e_fromUnion, i_e_ctor, i_e_datatypeField) =>
+      exprRefs(i_e_obj)
+    case index(i_e_arr, i_e_idx) =>
+      (exprRefs(i_e_arr) + exprRefs(i_e_idx))
+    case stringIndex(i_e_str, i_e_idx) =>
+      (exprRefs(i_e_str) + exprRefs(i_e_idx))
+    case tupleLiteral(i_e_elems) =>
+      exprListRefs(i_e_elems)
+    case tupleProj(i_e_obj, i_e_index, i_e_arity) =>
+      exprRefs(i_e_obj)
+    case implies(i_e_premises, i_e_conclusion) =>
+      (exprListRefs(i_e_premises) + exprRefs(i_e_conclusion))
+    case record(i_e_spread, i_e_fields, i_e_ctor, i_e_ctorOf) =>
+      ((match i_e_spread { case Some(i_e_spread_val) => exprRefs(i_e_spread_val) case None => [] }) + fieldListRefs(i_e_fields))
+    case arrayLiteral(i_e_elems) =>
+      exprListRefs(i_e_elems)
+    case arrayRange(i_e_length) =>
+      exprRefs(i_e_length)
+    case mapLiteral(i_e_entries) =>
+      entryListRefs(i_e_entries)
+    case methodCall(i_e_obj, i_e_objTy, i_e_method, i_e_args, i_e_monadic) =>
+      (exprRefs(i_e_obj) + exprListRefs(i_e_args))
+    case lambda(i_e_params, i_e_body, i_e_typedParams) =>
+      stmtListRefs(i_e_body)
+    case if_(i_e_cond, i_e_then, i_e_else) =>
+      ((exprRefs(i_e_cond) + exprRefs(i_e_then)) + exprRefs(i_e_else))
+    case match_(i_e_scrutinee, i_e_arms) =>
+      (exprRefs(i_e_scrutinee) + armListRefs(i_e_arms))
+    case forall_(i_e_var, i_e_type, i_e_body) =>
+      exprRefs(i_e_body)
+    case exists_(i_e_var, i_e_type, i_e_body) =>
+      exprRefs(i_e_body)
+    case let(i_e_name, i_e_type, i_e_value, i_e_body) =>
+      (exprRefs(i_e_value) + exprRefs(i_e_body))
+  }
+}
+
+function exprListRefs(es: seq<Expr>): seq<string>
+{
+  if (|es| == 0) then
+    []
+  else
+    (exprRefs(es[0]) + exprListRefs(es[1..]))
+}
+
+function fieldListRefs(fs: seq<RecordField>): seq<string>
+{
+  if (|fs| == 0) then
+    []
+  else
+    (exprRefs(fs[0].value) + fieldListRefs(fs[1..]))
+}
+
+function entryRefs(en: MapEntry): seq<string>
+{
+  (exprRefs(en.key) + exprRefs(en.value))
+}
+
+function entryListRefs(ens: seq<MapEntry>): seq<string>
+{
+  if (|ens| == 0) then
+    []
+  else
+    (entryRefs(ens[0]) + entryListRefs(ens[1..]))
+}
+
+function armRefs(arm: MatchArm): seq<string>
+{
+  exprRefs(arm.body)
+}
+
+function armListRefs(arms: seq<MatchArm>): seq<string>
+{
+  if (|arms| == 0) then
+    []
+  else
+    (armRefs(arms[0]) + armListRefs(arms[1..]))
+}
+
+function stmtRefs(s: Stmt): seq<string>
+{
+  match s {
+    case let(i_s_name, i_s_type, i_s_mutable, i_s_value) =>
+      exprRefs(i_s_value)
+    case assign(i_s_target, i_s_value) =>
+      exprRefs(i_s_value)
+    case bind(i_s_target, i_s_value) =>
+      exprRefs(i_s_value)
+    case let_bind(i_s_name, i_s_value) =>
+      exprRefs(i_s_value)
+    case return_(i_s_value) =>
+      exprRefs(i_s_value)
+    case ghostLet(i_s_name, i_s_type, i_s_value) =>
+      exprRefs(i_s_value)
+    case ghostAssign(i_s_target, i_s_value) =>
+      exprRefs(i_s_value)
+    case assert_(i_s_expr, i_s_assumed) =>
+      exprRefs(i_s_expr)
+    case break_ =>
+      []
+    case continue_ =>
+      []
+    case if_(i_s_cond, i_s_then, i_s_else) =>
+      ((exprRefs(i_s_cond) + stmtListRefs(i_s_then)) + stmtListRefs(i_s_else))
+    case match_(i_s_scrutinee, i_s_arms) =>
+      (exprRefs(i_s_scrutinee) + stmtArmListRefs(i_s_arms))
+    case while_(i_s_cond, i_s_invariants, i_s_decreasing, i_s_doneWith, i_s_body) =>
+      ((((exprRefs(i_s_cond) + exprListRefs(i_s_invariants)) + (match i_s_decreasing { case Some(i_s_decreasing_val) => exprRefs(i_s_decreasing_val) case None => [] })) + (match i_s_doneWith { case Some(i_s_doneWith_val) => exprRefs(i_s_doneWith_val) case None => [] })) + stmtListRefs(i_s_body))
+    case forin(i_s_idx, i_s_bound, i_s_invariants, i_s_body) =>
+      ((exprRefs(i_s_bound) + exprListRefs(i_s_invariants)) + stmtListRefs(i_s_body))
+  }
+}
+
+function stmtListRefs(ss: seq<Stmt>): seq<string>
+{
+  if (|ss| == 0) then
+    []
+  else
+    (stmtRefs(ss[0]) + stmtListRefs(ss[1..]))
+}
+
+function stmtArmListRefs(arms: seq<StmtMatchArm>): seq<string>
+{
+  if (|arms| == 0) then
+    []
+  else
+    (stmtListRefs(arms[0].body) + stmtArmListRefs(arms[1..]))
+}
+
+function stmtBinders(s: Stmt): seq<string>
+{
+  match s {
+    case let(i_s_name, i_s_type, i_s_mutable, i_s_value) =>
+      [i_s_name]
+    case let_bind(i_s_name, i_s_value) =>
+      [i_s_name]
+    case ghostLet(i_s_name, i_s_type, i_s_value) =>
+      [i_s_name]
+    case assign(i_s_target, i_s_value) =>
+      [i_s_target]
+    case bind(i_s_target, i_s_value) =>
+      [i_s_target]
+    case ghostAssign(i_s_target, i_s_value) =>
+      [i_s_target]
+    case forin(i_s_idx, i_s_bound, i_s_invariants, i_s_body) =>
+      ([i_s_idx] + stmtListBinders(i_s_body))
+    case if_(i_s_cond, i_s_then, i_s_else) =>
+      (stmtListBinders(i_s_then) + stmtListBinders(i_s_else))
+    case while_(i_s_cond, i_s_invariants, i_s_decreasing, i_s_doneWith, i_s_body) =>
+      stmtListBinders(i_s_body)
+    case match_(i_s_scrutinee, i_s_arms) =>
+      stmtArmListBinders(i_s_arms)
+    case return_(i_s_value) =>
+      []
+    case break_ =>
+      []
+    case continue_ =>
+      []
+    case assert_(i_s_expr, i_s_assumed) =>
+      []
+  }
+}
+
+function stmtListBinders(ss: seq<Stmt>): seq<string>
+{
+  if (|ss| == 0) then
+    []
+  else
+    (stmtBinders(ss[0]) + stmtListBinders(ss[1..]))
+}
+
+function stmtArmListBinders(arms: seq<StmtMatchArm>): seq<string>
+{
+  if (|arms| == 0) then
+    []
+  else
+    ((patternBinders(arms[0].pattern) + stmtListBinders(arms[0].body)) + stmtArmListBinders(arms[1..]))
 }
 
 function pWild(): MatchPattern

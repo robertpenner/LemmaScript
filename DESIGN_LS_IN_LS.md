@@ -464,7 +464,8 @@ verify structural contracts." Not: "the compiler proves its own
 correctness." At P1/T1: "the compiler executes a generated verified
 implementation of selected passes, with the stated guarantees." Full
 compiler correctness requires P2. Documentation must classify each module's
-P- and T-level accurately.
+P- and T-level accurately. TOOLS.md ("Fork integration checks") lists the
+current level and proved properties of each self-checked module.
 
 ### 8.3 Module portability
 

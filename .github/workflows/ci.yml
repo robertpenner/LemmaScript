@@ -37,6 +37,18 @@ jobs:
         working-directory: tools
         run: npm run fuzz:narrowing -- --seed 1 --out "${{ runner.temp }}/narrowing-fuzz"
 
+      - name: Check narrowing semantic comparison
+        working-directory: tools
+        run: npm run fuzz:semantic -- --seed 1 --runs 15 --inputs-per-fn 3 --out "${{ runner.temp }}/narrowing-fuzz-semantic"
+
+      - name: Upload semantic fuzzer failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: narrowing-fuzz-semantic-artifacts
+          path: ${{ runner.temp }}/narrowing-fuzz-semantic
+          if-no-files-found: ignore
+
       - name: Check pair-scan investigation
         run: npx tsx investigations/peephole-pair-scans.ts
 

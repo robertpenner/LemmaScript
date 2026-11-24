@@ -30,6 +30,9 @@
  *   npm run fuzz:narrowing -- [--seed N] [--runs N] [--classes N] [--minutes N] [--out DIR] [--positions P,Q]
  *   npm run fuzz:narrowing -- --seed N --path P   replay one round's counterexample
  *   npm run fuzz:narrowing -- --file DIR/1.ts     run the oracles on a saved module
+ *   npm run fuzz:semantic  -- [--seed N] [--runs N] [--inputs-per-fn K] [--classes N] [--minutes N] [--verify-timeout S] [--out DIR] [--positions P,Q]
+ *   npm run fuzz:semantic  -- --seed N --inputs-per-fn K --path P   replay one semantic counterexample
+ *   npm run fuzz:semantic  -- --case DIR/1.semantic.json            replay a saved semantic case without reshrinking
  *
  * Defaults: seed 1, 150 runs per round, stop after 12 classes or 9 minutes.
  * `--positions` limits the statement forms generated (names in POSITIONS),
@@ -651,19 +654,29 @@ export function runCampaign(opts: CampaignOptions): CampaignSummary {
   };
 }
 
+import {
+  replaySavedSemanticCase,
+  replaySemanticSeedPath,
+  runSemanticCampaign,
+} from "./semantic-oracle.js";
+
 // ── Driver ──────────────────────────────────────────────────
 
 function main(): number {
   const { values: args } = parseArgs({
     options: {
       seed: { type: "string", default: "1" },
-      runs: { type: "string", default: "150" },
+      runs: { type: "string" },
       classes: { type: "string", default: "12" },
       positions: { type: "string", default: POSITIONS.join(",") },
-      minutes: { type: "string", default: "9" },
+      minutes: { type: "string" },
       out: { type: "string" },
       path: { type: "string" },
       file: { type: "string" },
+      semantic: { type: "boolean", default: false },
+      "inputs-per-fn": { type: "string", default: "3" },
+      "verify-timeout": { type: "string", default: "15" },
+      case: { type: "string" },
       help: { type: "boolean", default: false },
     },
   });
@@ -671,6 +684,16 @@ function main(): number {
   if (args.help) {
     console.log(readFileSync(new URL(import.meta.url), "utf8").split("*/")[0].replace(/^\/\*\*\n/, "").replace(/^ \* ?/gm, ""));
     return 0;
+  }
+
+  if (args.case) {
+    const outcome = replaySavedSemanticCase(args.case);
+    if (outcome.ok) {
+      console.log(`saved semantic replay passed (${outcome.checks.length} checks verified on both pre and opt)`);
+      return 0;
+    }
+    console.log(`${outcome.signature}\n${outcome.detail}`);
+    return 1;
   }
 
   if (args.file) {
@@ -689,12 +712,39 @@ function main(): number {
   }
 
   const seed = Number(args.seed);
-  const numRuns = Number(args.runs);
+  const numRuns = Number(args.runs ?? (args.semantic ? "20" : "150"));
+  const minutes = Number(args.minutes ?? (args.semantic ? "8" : "9"));
+  const inputsPerFn = Number(args["inputs-per-fn"]);
+  const verifyTimeLimitSec = Number(args["verify-timeout"]);
   const positions = args.positions.split(",").map(p => p.trim()) as Position[];
   const unknown = positions.filter(p => !POSITIONS.includes(p));
   if (unknown.length > 0) {
     console.error(`unknown positions: ${unknown.join(", ")}; choose from ${POSITIONS.join(", ")}`);
     return 2;
+  }
+
+  if (args.semantic) {
+    if (args.path) {
+      const replayed = replaySemanticSeedPath({ seed, path: args.path, runs: numRuns, inputsPerFn, positions });
+      if (replayed.passed) {
+        console.log("semantic replay passed");
+        return 0;
+      }
+      console.log(`${replayed.outcome?.source ?? ""}\n${replayed.outcome?.signature}\n${replayed.outcome?.detail}`);
+      return 1;
+    }
+    const out = args.out ?? path.join(tmpdir(), `lsc-narrowing-semantic-seed${seed}`);
+    const summary = runSemanticCampaign({
+      seed,
+      runs: numRuns,
+      classes: Number(args.classes),
+      inputsPerFn,
+      positions,
+      minutes,
+      out,
+      verifyTimeLimitSec,
+    });
+    return summary.failureClasses === 0 ? 0 : 1;
   }
 
   if (args.path) {
@@ -728,7 +778,7 @@ function main(): number {
     runs: numRuns,
     classes: Number(args.classes),
     positions,
-    minutes: Number(args.minutes),
+    minutes,
     out,
   });
   return summary.failureClasses === 0 ? 0 : 1;

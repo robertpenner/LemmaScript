@@ -2,7 +2,7 @@
 
 **Status:** research proposal; no JavaScript-number mode is implemented
 **Date:** August 2026
-**Updated:** November 2026 (recorded `idealized`-mode progress, Phase 0 `Math.*`/oracle spikes, and Phase 2 Dafny spike results)
+**Updated:** November 2026 (recorded `idealized`-mode progress, Phase 0 `Math.*`/oracle spikes, Phase 2 Dafny spike results, and settled v1 decisions)
 **Issue:** [#205](https://github.com/midspiral/LemmaScript/issues/205)
 
 ## Decision summary
@@ -16,20 +16,23 @@ boolean:
 }
 ```
 
-The candidate values are:
+The initial values are:
 
 | Value | Meaning | Intended use |
 |---|---|---|
 | `idealized` | Preserve today's mathematical `int`/`nat`/`real` model exactly. | Existing proofs and algorithms whose numeric range is a stated trust assumption. |
-| `safe-integer` | Use mathematical integers, but require proof that every source value and intermediate operation agrees with JavaScript safe-integer execution. | A possible lower-cost, faithful subset for integer algorithms. This value should not ship until its obligation and boundary story is designed. |
 | `javascript` | Model ECMAScript `Number` values and every supported numeric operation with its JavaScript result. | Code whose behavior depends on rounding, NaN, infinities, signed zero, or the 53-bit precision boundary. |
 
+Safe-integer guarantees are modeled as refinements inside `javascript` mode
+rather than as a separate `safe-integer` config value; keeping the option
+enum-shaped leaves room to add another mode later only if real proofs show
+refinements inside `javascript` mode are too slow.
+
 `idealized` remains the default for backward compatibility. `javascript` is a
-semantic commitment, not merely a representation selection. It must be
-unavailable for a backend until that backend has passed the conformance and
-proof-usability gates in this document. A backend may land first; selecting an
-unavailable mode must produce a clear error rather than use idealized
-arithmetic.
+semantic commitment, not merely a representation selection. Whichever backend
+passes the Phase 2 conformance and proof-usability gates first may ship behind
+`number-semantics: "javascript"`; selecting an unavailable mode or backend must
+produce a clear error rather than use idealized arithmetic.
 
 The `bv64` newtype sketched in issue #205 is not a model of JavaScript
 `number`. Bitvector arithmetic wraps modulo 2^64, while JavaScript `Number` is
@@ -87,12 +90,11 @@ operators and library methods individually.
 Not every such method has one engine-independent bit result. ECMAScript marks
 general exponentiation and many transcendental `Math` functions as
 *implementation-approximated*: the specification recommends an ideal result
-but delegates the concrete approximation to the implementation. The design
-must choose between an engine-neutral relation (sound for every conforming
-runtime but possibly weak), an explicit and versioned runtime profile such as a
-particular V8 build, or rejecting those functions. The unqualified `javascript`
-mode should initially reject them; a Node result alone is not the ECMAScript
-standard.
+but delegates the concrete approximation to the implementation. The v1
+`javascript` mode rejects these functions; when they are later added, they
+should use weak, engine-neutral contracts (exact special-value cases plus range
+and finiteness bounds) rather than V8-specific runtime profiles. A Node result
+alone is not the ECMAScript standard.
 
 Before implementation, build a checked matrix with one row for every numeric
 construct accepted by the resolver. At minimum it must cover:
@@ -120,11 +122,15 @@ This matrix should distinguish three states: faithful and implemented;
 explicitly rejected in `javascript` mode; and outside the LemmaScript fragment.
 There must be no “accepted but idealized” state.
 
-Useful initial scope is core values, literals, deterministic arithmetic,
-comparisons, truthiness, and the exact subset of current `Math` operations whose
-contracts have been completed. General exponentiation, implementation-approximated
-`Math` functions, bitwise operators, numeric Map/Set keys, and string conversion
-can follow, but must be rejected until their rows are complete.
+The v1 scope is core values and literals, classification predicates,
+deterministic arithmetic (`+`, `-`, `*`, `/`, unary `-`), ordering, equality
+(`===`, `!==`, `Object.is`), truthiness, the exact `Math` subset already
+lowered in `transform.ts` (`abs`, `min`, `max`, `floor`, `ceil`, plus
+`trunc`/`round` if cheap), and the array-index/length and ghost-decreases
+bridge. Remainder (`%`), general exponentiation (`**`), implementation-approximated
+`Math` functions, bitwise operators, numeric `Map` keys and `Set` elements, and
+string conversion are deferred to Phase 4 and must be rejected until their rows
+are complete.
 
 ## 3. Current pipeline gaps
 
@@ -213,11 +219,10 @@ The target design should separate:
 
 A non-negative integral Number is not necessarily a safe integer, and a safe
 non-negative integer is not necessarily a valid JavaScript array index. These
-must not be one refinement. Existing `nat`/`int` source annotations can either
-be rejected initially in `javascript` mode or redefined there as refinements
-that leave operations on `js-number`; silently retaining their physical-type
-meaning is not an option. A dedicated `safe-int`/`safe-nat` annotation may be
-clearer, but that surface choice belongs after the refinement spike.
+must not be one refinement. In `javascript` mode, `nat` and `int` annotations
+are rejected on source `number` variables and remain valid only for `ghost`
+values and helper specs; source refinements use explicit names such as
+`safe-int` and `safe-nat` so the 53-bit ceiling stays visible in source files.
 
 Arrays make the distinction unavoidable. The verifier currently models arrays
 as arbitrary mathematical sequences, while JavaScript array length is bounded
@@ -228,14 +233,14 @@ length also produce JavaScript Numbers even if the emitter keeps a separate
 mathematical length for proofs. Loop termination similarly uses a decoded ghost
 measure, not floating-point order itself.
 
-### What a `safe-integer` mode would promise
+### Why `safe-integer` is deferred as a separate mode
 
-If `safe-integer` becomes a public value, it needs a stricter invariant than
-`Number.isSafeInteger`. Its mathematical representation would cover only finite
-integral values in `[-(2^53 - 1), 2^53 - 1]` and would need to exclude negative
-zero. JavaScript regards `-0` as a safe integer, but mapping it to mathematical
-zero loses behavior observable through division, `Object.is`, and later
-operations.
+If `safe-integer` ever becomes a public config value, it needs a stricter
+invariant than `Number.isSafeInteger`. Its mathematical representation would
+cover only finite integral values in `[-(2^53 - 1), 2^53 - 1]` and would need
+to exclude negative zero. JavaScript regards `-0` as a safe integer, but mapping
+it to mathematical zero loses behavior observable through division, `Object.is`,
+and later operations.
 
 Inputs and literals must establish that canonical-safe invariant. Each
 arithmetic operation must then prove that its JavaScript result is another
@@ -248,11 +253,12 @@ when that particular larger integer happens to be representable.
 
 These are verification obligations, not generated assumptions. Entry-point
 contracts also need matching runtime guards at the verified/unverified boundary;
-otherwise real callers can supply values outside the proved domain. The spike
-must prove once, in each backend, that every admitted mathematical lowering
-agrees with the JavaScript operation under these invariants. If this becomes
-more cumbersome than using `js-number` plus refinements, `safe-integer` should
-not become a separate config value.
+otherwise real callers can supply values outside the proved domain. Because
+those obligations add substantial proof friction while still excluding all
+fractional arithmetic, safe integers will initially be expressed as refinements
+inside `javascript` mode rather than as a separate `number-semantics` value.
+Revisit a standalone mode only if real proofs show that `javascript` mode with
+safe-integer refinements is too slow for Z3 or Lean.
 
 ## 5. Representation choices
 
@@ -486,8 +492,8 @@ times out is not a usable backend.
    from §2.
 3. Audit the applicable Test262 cases, then build the Node bit/equality oracle
    and boundary corpus at pinned revisions.
-4. Classify implementation-approximated operations and choose rejection,
-   engine-neutral relations, or explicit runtime profiles for each family.
+4. Classify implementation-approximated operations so they are rejected in v1
+   and ready for future engine-neutral contracts.
 5. Define the source-to-backend relation and the trusted computing base in a
    short, reviewable form.
 
@@ -510,18 +516,19 @@ A companion fix rejecting unsupported binary operators (`**`, `**=`, `>>>`,
 1. Preserve numeric literal spelling and exact bits.
 2. Prototype a `js-number` IR kind without changing idealized output.
 3. Define finite/integer/safe/index predicates and exact decoding.
-4. Decide the `nat`/`int` annotation behavior, sequence-length bound, indexing
-   obligations, and decreases bridge.
-5. Decide whether `safe-integer` earns a public config value or remains a set of
-   refinements within `javascript` mode.
+4. Implement the `javascript`-mode rejection of `nat`/`int` on source `number`
+   variables (keeping them for `ghost` values), explicit `safe-int`/`safe-nat`
+   refinements, sequence-length bounds, indexing obligations, and the decreases
+   bridge.
 
 **Gate:** existing examples regenerate byte-for-byte in `idealized`, and the
 refinement story does not prove source operations with mathematical arithmetic.
 
 ### Phase 2 — independent backend spikes
 
-Implement only literals, classification, core arithmetic, comparisons, the
-three equality relations, and truthiness against released/pinned backend
+Implement the v1 operational fragment (literals, classification, core
+arithmetic, comparisons, the three equality relations, truthiness, exact `Math`
+subset, and array-index/decreases bridges) against released/pinned backend
 versions. Cross-check the oracle, then run the proof-usability suite. Do not yet
 add the public config key.
 
@@ -536,10 +543,12 @@ currently deferred on the back burner.
 
 ### Phase 3 — one backend behind the option
 
-Add the registry entry, option flow, artifact marker, hard errors for unsupported
-constructs/backends, dependency-mode checks, and focused documentation. Dafny
-may land before Lean if it passes first. `idealized` remains byte-for-byte
-unchanged.
+Add the registry entry (`"idealized" | "javascript"`), option flow, artifact
+marker, hard errors for unsupported constructs/backends (including numeric
+`Map`/`Set` keys and implementation-approximated operations), dependency-mode
+checks, and focused documentation. Whichever backend passes Phase 2 first ships
+first; the other returns a hard error until it passes Phase 2. `idealized`
+remains byte-for-byte unchanged.
 
 **Gate:** `lsc check` cannot silently verify a JavaScript-mode file with
 idealized operations, even through a builtin, collection, cross-file call, or
@@ -547,26 +556,48 @@ hand-carried artifact.
 
 ### Phase 4 — broaden the faithful fragment
 
-Add `%`, conversions/indexing, the supported `Math` surface, bitwise operators,
-numeric collection behavior, and string conversion one reviewed family at a
-time. Each family lands with its normative matrix rows, Node oracle cases, and
-backend proofs.
+Add `%`, bitwise operators, weak engine-neutral contracts for
+implementation-approximated `Math` / `**`, numeric `Map`/`Set` SameValueZero
+containers, string conversion, and optional real-valued error-bound libraries
+one reviewed family at a time. Each family lands with its normative matrix rows,
+Node oracle cases, and backend proofs.
 
-## 9. Open decisions
+## 9. Decisions
 
-1. Is `safe-integer` valuable enough to be a semantic mode, or should safe
-   integers be refinements inside `javascript` mode?
-2. In JavaScript mode, should existing `nat`/`int` annotations become runtime
-   Number refinements or fail in favor of explicit `safe-nat`/`safe-int` names?
-3. May the initial release be Dafny-only, with a hard Lean error, or is backend
-   parity required before exposing the option?
-4. Which operation families form the minimum useful JavaScript-mode fragment?
-5. Are numeric keys/elements in Map and Set initially prohibited, or do custom
-   SameValueZero containers belong in the first release?
-6. Is a separate mathematical floating-point library needed for meaningful
-   error proofs, or is exact operational verification the initial goal?
-7. Should implementation-approximated operations stay unsupported, use a weak
-   engine-neutral relation, or require a separately versioned runtime profile?
+### Settled (v1)
+
+1. **No standalone `safe-integer` mode in v1.** Keep `number-semantics` as
+   `"idealized" | "javascript"` initially (still an enum) and model safe
+   integers as refinements inside `javascript` mode. Revisit a separate mode
+   only if real proofs show refinements are too slow for Z3 or Lean.
+2. **Reject `nat`/`int` on source `number` variables in `javascript` mode.**
+   Keep `nat`/`int` valid for `ghost` values and helper specs only, and use
+   explicit names such as `safe-int`/`safe-nat` for source refinements so the
+   53-bit ceiling stays visible at the declaration site.
+3. **Ship the first backend that passes Phase 2.** Backend parity is not
+   required for the initial release; whichever backend passes the Phase 2 gate
+   first ships behind `number-semantics: "javascript"`, and the other returns a
+   hard error until it passes.
+4. **Minimum useful v1 fragment.** Include exact literals, classification
+   predicates, core arithmetic (`+`, `-`, `*`, `/`, unary `-`), ordering,
+   equality (`===`, `!==`, `Object.is`), truthiness, the exact `Math` subset
+   already lowered in `transform.ts` (`abs`, `min`, `max`, `floor`, `ceil`, plus
+   `trunc`/`round` if cheap), and the array-index/length and ghost-decreases
+   bridge. Defer `%`, `**`, bitwise operators, transcendental `Math.*`, numeric
+   `Map`/`Set` keys, and `String(number)` to Phase 4.
+5. **Prohibit numeric `Map` keys and `Set` elements in v1.** Emit a hard
+   diagnostic in `javascript` mode and defer custom SameValueZero containers to
+   Phase 4.
+6. **Target exact operational verification first.** Focus v1 on special values,
+   NaN/Infinity safety, bounds/clamping, signed-zero behavior, and safe-integer
+   exactness; defer separate real-valued error-bound libraries to Phase 4+.
+7. **Reject implementation-approximated operations in v1; use engine-neutral
+   contracts later.** Keep `**` and transcendental `Math.*` rejected in v1, and
+   model them later with weak, engine-neutral relations (exact special-value
+   cases plus range/finiteness bounds) rather than V8-specific runtime profiles.
+
+### Open
+
 8. While native Dafny `fp64` remains blocked on upstream soundness and solver
    stability, is an unrounded `extended-real` mode (Encoding B: exact `real`
    plus `-0`, `±Infinity`, and `NaN`) worth offering as an intermediate option,

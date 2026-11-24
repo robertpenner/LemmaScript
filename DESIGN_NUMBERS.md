@@ -2,6 +2,7 @@
 
 **Status:** research proposal; no JavaScript-number mode is implemented
 **Date:** August 2026
+**Updated:** November 2026 (recorded `idealized`-mode progress, Phase 0 `Math.*`/oracle spikes, and Phase 2 Dafny spike results)
 **Issue:** [#205](https://github.com/midspiral/LemmaScript/issues/205)
 
 ## Decision summary
@@ -148,11 +149,20 @@ one emitter boundary:
   integer remainder/division helpers, real conversions, and mathematical
   floor/ceiling assumptions.
 - The recognized numeric-library surface is not yet one closed list:
-  [`tools/src/resolve.ts`](tools/src/resolve.ts) types `Math.abs`, `min`, `max`,
-  `floor`, `ceil`, `round`, and `trunc`, while transform has dedicated lowering
-  only for `abs`, binary `min`/`max`, `floor`, and `ceil` (plus separate spread
-  extraction for min/max). Phase 0 must consolidate acceptance, arity, typing,
-  and lowering before a JavaScript-mode support claim is possible.
+  [`tools/src/resolve.ts`](tools/src/resolve.ts),
+  [`tools/src/transform.ts`](tools/src/transform.ts), and the emitters now
+  handle `Math.abs`, `Math.min` and `Math.max` (1-arg, 2-arg, 3+-arg, and
+  `int[]`/`real[]` spreads), `Math.floor`, `Math.ceil`, `Math.trunc`,
+  `Math.round` (Dafny reals and both backends for integers), and
+  `Number.isSafeInteger` (both integers and Dafny `real`). Acceptance, arity,
+  typing, and lowering are still split across passes rather than driven by one
+  table, unsupported binary operators (`**`, `**=`, `>>>`, `^`, `^=`) still
+  pass through extraction without a dedicated diagnostic (tracked in
+  `robertpenner/LemmaScript#30`), and `Math.floor(a / b)` on integers lowers to
+  `JSFloorDiv(a, b)`, which differs from JavaScript for quotients above 2^53
+  because JavaScript rounds the quotient to binary64 before flooring. Phase 0
+  must consolidate acceptance, arity, typing, and lowering before a
+  JavaScript-mode support claim is possible.
 - [`tools/src/dafny-emit.ts`](tools/src/dafny-emit.ts) maps those mathematical
   types to Dafny. [`tools/src/lean-emit.ts`](tools/src/lean-emit.ts) currently
   rejects real arithmetic rather than modeling floating point.
@@ -251,38 +261,103 @@ not become a separate config value.
 | Native prover binary64 | Exact core arithmetic through SMT floating-point or a kernel model; wrappers can supply ECMAScript-specific operations. | Best starting point, but solver automation for conversions and global arithmetic properties may be weak. Backend versions and APIs are still moving. | Preferred implementation path after backend spikes pass. |
 | Raw `bv64` plus verified software floating point | Can be fully faithful when the bits are decoded and every operation implements correct rounding. | Very large arithmetic development; ordinary bitvector `+`, `*`, `/`, and `%` are the wrong operations. | Viable fallback or reference model, not a small newtype change. |
 | Algebraic datatype plus exact significand/exponent arithmetic | Makes NaN, infinities, and signed zero explicit and can support mathematical lemmas. | Still requires a verified correct-rounding implementation and may be expensive for SMT and Lean reduction. | Worth a prototype only if native models are unusable. |
+| Exact real plus special values (algebraic datatype, no rounding) | Models NaN, infinities, and signed zero faithfully, but uses exact `real` arithmetic with no binary64 rounding or overflow. | Measured as Encoding B on Dafny 4.11.0: strongest symbolic verification rate (528/0/4 isolated batches; 66/66 sampled `Math.*` vectors in 2.56 s), at higher manual hint cost (51 hints) and with `bv32` timeouts. | Candidate intermediate mode or companion specification; does not satisfy binary64 rounding or overflow. |
 | Exact real plus special values and a rounding relation | Useful as a specification layer for error proofs. | A relation does not directly give executable, deterministic results; choosing the rounded value is substantial work. | Possible companion proof model, not the primary operational encoding. |
 | Uninterpreted operations with axioms | Easy to emit and can state the desired laws. | Moves the hard part into a trusted axiom set and proves little about concrete calculations. | Not acceptable as the default meaning of `javascript`; only an explicitly documented trust mode, if ever. |
 | Checked safe-integer abstraction | Faithful for admitted integer computations when operands and results are proved safe and operations such as division satisfy stricter side conditions. | Much easier for existing proofs; excludes fractions, NaN, infinities, signed-zero distinctions, and overflowing/rounding computations. | Useful possible intermediate mode, not a substitute for full `javascript`. |
 
 ### Dafny research snapshot
 
-LemmaScript currently pins Dafny 4.11. The flags and `newtype uint64 = b:
+LemmaScript currently pins Dafny 4.11.0. The flags and `newtype uint64 = b:
 bv64` experiment in #205 enable a modulo-integer representation, not binary64
 semantics.
 
-Dafny's development documentation now describes native `fp32`/`fp64`, but the
-active [sound floating-point PR](https://github.com/dafny-lang/dafny/pull/6514)
-is still a draft as of this design. It reports verifier unsoundnesses, decimal
-literal rounding issues, equality/collection mismatches, and poor solver
-behavior around `fp.to_real`; it is blocked on upstream work before release.
-That is evidence to wait for a released, pinned capability and then rerun the
-spike, not to bind LemmaScript to the current development API.
+Dafny merged native `fp32`/`fp64` in `dafny-lang/dafny#6323` (2025-11-07, after
+the 4.11.0 release), while the [sound floating-point
+PR](https://github.com/dafny-lang/dafny/pull/6514) remains an open draft. The
+literal rounding fix `boogie-org/boogie#1141` merged in Boogie (2026-08-20) but
+is not yet in the Boogie 3.5.5 bundled with Dafny nightlies.
 
-The Dafny spike must determine:
+#### November 2026 Dafny spike results
 
-1. Whether exact bit-pattern construction and classification are supported.
-2. Which APIs produce total IEEE results. Dafny surface operators may impose
-   well-formedness obligations that exclude NaN-producing cases; JavaScript
-   arithmetic must use total/unchecked operations or wrappers instead.
-3. Which equality represents numeric `===`. Dafny value identity intentionally
-   distinguishes signed zero and identifies NaN, so it cannot stand in for all
-   JavaScript equality contexts.
-4. How to implement ECMAScript `%`, conversions, rounding functions, and
-   SameValueZero when no native operation matches.
-5. Whether representative LemmaScript proofs are stable under repeated isolated
-   and whole-file verification, not merely whether concrete expressions reduce.
-6. The minimum Dafny version and any required artifact header/CLI flags.
+A comparative spike (`robertpenner/LemmaScript#20`, draft PR
+`robertpenner/LemmaScript#29`, commit `6005100`) measured three encodings across
+five workloads (safe-integer arithmetic, NaN/signed-zero clamp, signed-zero
+equality, `ToInt32`/bitwise operations, and `lerp` plus int/real bridges), 66
+sampled `Math.*` vectors, and reproductions of every `dafny-lang/dafny#6514`
+defect, using a 30 s per-run limit (one `--isolate-assertions` run and three
+seeded whole-file runs):
+
+- **Encoding A (`SafeInt` newtype on pinned Dafny 4.11.0 / `z3-4.12.1`):** 191
+  verified, 1 error, 3 timeouts isolated (14 hand-written hints). Fast on
+  arithmetic and clamp; timeouts sit in `bv32` round-trips. Cannot represent
+  NaN, infinities, `-0`, or fractions.
+- **Encoding B (algebraic extended `real` + `-0` flag / `PosInf` / `NegInf` /
+  `NaN` on pinned Dafny 4.11.0 / `z3-4.12.1`):** 528 verified, 0 errors, 4
+  timeouts isolated (51 hand-written hints to unfold the datatype); 66/66
+  sampled `Math.*` vectors verify in 2.56 s. Timeouts occur in `bv32` concrete
+  examples and occasionally in seeded `Midpoint`. Arithmetic is exact real
+  without rounding or overflow.
+- **Encoding C (native `fp64` on nightly `4.11.1+a869244` / `z3-4.16.0`, repros
+  also run on `z3-4.12.1`):** 200 verified, 7 errors, 58 timeouts isolated (16
+  hints). Concrete facts and all 66 sampled `Math.*` vectors verify quickly
+  (2.90 s), and it proves real JavaScript counterexamples such as
+  `lerp(-MAX_VALUE, MAX_VALUE, 0)` evaluating to NaN. Symbolic range, order,
+  and conversion proofs routinely time out or report errors on true statements.
+
+Answers to the six spike questions:
+
+1. **Exact bit-pattern construction and classification:** Nightly `fp64`
+   supports classification (`IsNaN`, `IsInfinite`, `IsFinite`, `IsNormal`,
+   `IsSubnormal`, `IsZero`, `IsPositive`, `IsNegative`) and IEEE constants.
+   Bit-pattern casts (`x as bv64` and `b as fp64`) are rejected at resolution.
+   Finite values can be emitted as exact decimal expansions (all 66 sampled
+   vectors, including subnormal `-5e-324`, verified). `fp64` is absent in
+   tagged Dafny 4.11.0.
+2. **Total IEEE APIs:** Nightly static methods (`fp64.Add`, `Sub`, `Mul`,
+   `Div`, `Neg`, `Less`, `LessOrEqual`, `Greater`, `GreaterOrEqual`, `Equal`)
+   are total with round-to-nearest-even. Surface operators carry obligations
+   that are checked inconsistently: for finite nonzero `x`, `x / 0.0` reports
+   possible division by zero while `x / -0.0` verifies without error. `Abs`,
+   `Sqrt`, `Min`, `Max`, `Floor`, `Ceiling`, and `Round` require non-NaN
+   arguments, and `fp64.Round` ties to even instead of JavaScript's ties toward
+   `+Infinity`, so JavaScript `Math.*` requires explicit wrappers.
+3. **Equality for `===`:** `fp64.Equal` matches `===` (NaN unequal to itself,
+   `+0 == -0`). Ghost `==` matches `Object.is`. Compiled `==` rejects NaN and
+   mixed signed zeros. Surface `<=` disagrees with ghost `==` on signed zeros
+   (`0.0 <= -0.0 && -0.0 <= 0.0 && 0.0 != -0.0` verifies, breaking
+   antisymmetry).
+4. **Library helpers (`%`, conversions, rounding, SameValueZero):** SameValueZero,
+   `Math.min`/`max`, `Math.trunc`, and `Math.round` (comparing distance from
+   `Floor(x)` instead of `Floor(x + 0.5)`, which fails on
+   `0.49999999999999994`) verified 66/66 sampled vectors in both B and C.
+   `ToInt32` via `fp64.ToInt(x) % 2^32` and `bv32` round-trips through `int`
+   timed out or errored on symbolic inputs in every encoding. An `fp64` `%`
+   helper was not written.
+5. **Proof stability under repeated isolated and whole-file runs:** Encodings A
+   and B are stable on arithmetic, clamp, and signed-zero workloads (with
+   seed-sensitive variance near the 30 s limit on `bv32` and `B_safeint`
+   `Midpoint`). Encoding C fails the usability bar: every workload file other
+   than `C_lib` hits timeouts in every run, `fp64.Less`/`LessOrEqual`
+   trichotomy and transitivity time out under both Z3 4.12.1 and Z3 4.16.0, and
+   true `fp64.FromReal` facts report verifier errors or timeouts. In addition,
+   a type synonym `type F = fp64` crashes Dafny on the first literal, and
+   `dafny build -t js` crashes or miscompiles `fp64` (though LemmaScript does
+   not rely on Dafny's JavaScript compiler).
+6. **Minimum Dafny version and flags:** Encodings A and B run on pinned Dafny
+   4.11.0 with no extra flags. Encoding C requires a post-`#6323` build (no
+   tagged release yet) and fails the Phase 2 soundness gate: every pre-fix
+   defect tracked in `dafny-lang/dafny#6514` reproduced on the nightly (`as
+   int` clamping to `[-2^63, 2^63)`, `fp32.E` error, newtype `as real` skipping
+   finiteness, crash on unresolved fp literals, loop interval unsoundness, `/`
+   by `-0.0`, `fp.to_real` timeouts), and `boogie-org/boogie#1141` (1-ULP
+   literal rounding) reproduced under bundled Boogie 3.5.5.
+
+**Current Dafny verdict:** Native `fp64` does not pass the Phase 2 gate today
+because of open upstream soundness bugs (`dafny-lang/dafny#6514`, Boogie 3.5.5)
+and widespread symbolic solver timeouts. Do not bind LemmaScript to nightly
+`fp64`; re-run the spike after a tagged Dafny release ships `#6514` and a newer
+Boogie.
 
 Compilation support in Dafny is not a release blocker for LemmaScript, but any
 verification unsoundness, identity mismatch, or solver inability is.
@@ -298,9 +373,26 @@ describes a canonical-NaN `UInt64` model with logical definitions for a core set
 of operations, while warning that it is not a general floating-point theorem
 library and that some operations remain opaque.
 
-The Velvet 2 checkout now pins Lean 4.34.0 in `lean-toolchain`. Revalidate this
-research against that pinned version in an isolated branch; this proposal has
-not yet established floating-point proof support there. The Lean spike must answer:
+The Velvet 2 checkout now pins Lean 4.34.0 in `lean-toolchain`. A partial
+inventory (`robertpenner/LemmaScript#23`, draft PR `#28`, `599ee04`) checked
+`Math.*` against Lean 4.34.0 and Mathlib (`Divergences.lean`):
+
+- Core operations (`Float.abs`, `Float.sqrt`, comparisons, arithmetic) are
+  `Float.Model`-backed `def`s; transcendental `Math.*` functions (`pow`, `exp`,
+  `log`, trigonometry) remain `opaque` C externs.
+- Several Lean `Float` operations diverge from ECMAScript: `Float.pow` returns
+  `1` where JavaScript returns `NaN` (`±1 ** ±Infinity`, `1 ** NaN`); `min` and
+  `max` use `minOfLe`/`maxOfLe`, making NaN and `±0` results depend on argument
+  order; and `Float.round` rounds `-2.5` to `-3` and `-0.5` to `-1`.
+- Mathlib `ℝ` diverges from JavaScript on out-of-domain finite inputs
+  (`0 ^ (-1) = 0`, `√(-1) = 0`, `log 0 = 0`, `log (-1) = 0`, and finite values
+  for negative bases with non-integral exponents).
+
+The full Lean `Float.Model` workload spike (`robertpenner/LemmaScript#22`) and
+Lean Mathlib `real` prototype (`robertpenner/LemmaScript#21`) are currently on
+the back burner and have not been run; upstream Lean closure soundness bug
+`midspiral/LemmaScript#267` also remains open. When resumed, the Lean spike
+must still answer:
 
 1. Which source operations reduce in the kernel and which remain opaque.
 2. Whether Velvet 2's generated VCs and `finish` can use the model without
@@ -402,6 +494,17 @@ times out is not a usable backend.
 **Gate:** no accepted construct lacks a specified translation or an explicit
 diagnostic.
 
+*Progress (November 2026):* Two Phase 0 artifacts exist in fork draft PRs
+awaiting upstream layout and review decisions: a normative ECMAScript 2026
+`Math.*` matrix (12 exact vs. 14 implementation-approximated members) with
+1,487 deterministic Node vectors (`robertpenner/LemmaScript#28`), and a
+standalone Node `DataView` binary64 conformance oracle with 2,548 vectors
+across 12 families, raw NaN payload preservation plus canonicalization, and 16
+curated Test262 cases (`robertpenner/LemmaScript#39`, cross-checked with 0
+mismatches against `#28` and 162 verified / 0 errors against `#29` Encoding B).
+A companion fix rejecting unsupported binary operators (`**`, `**=`, `>>>`,
+`^`, `^=`) at extraction is in draft `robertpenner/LemmaScript#38`.
+
 ### Phase 1 — IR and refinement spike
 
 1. Preserve numeric literal spelling and exact bits.
@@ -425,6 +528,11 @@ add the public config key.
 **Gate:** exact conformance on the golden corpus, no trusted per-operation axioms,
 no known verifier unsoundness, stable proof times, and an identified minimum
 backend version.
+
+*Progress (November 2026):* The Dafny Phase 2 spike (`robertpenner/LemmaScript#29`)
+completed and found that native `fp64` does not pass this gate on current
+toolchains (see §5). The Lean Phase 2 spike (`robertpenner/LemmaScript#22`) is
+currently deferred on the back burner.
 
 ### Phase 3 — one backend behind the option
 
@@ -459,6 +567,10 @@ backend proofs.
    error proofs, or is exact operational verification the initial goal?
 7. Should implementation-approximated operations stay unsupported, use a weak
    engine-neutral relation, or require a separately versioned runtime profile?
+8. While native Dafny `fp64` remains blocked on upstream soundness and solver
+   stability, is an unrounded `extended-real` mode (Encoding B: exact `real`
+   plus `-0`, `±Infinity`, and `NaN`) worth offering as an intermediate option,
+   or should LemmaScript skip it and wait for faithful binary64?
 
 ## Primary references
 
@@ -469,6 +581,8 @@ backend proofs.
 - [TC39 Test262, the official ECMAScript conformance suite](https://github.com/tc39/test262)
 - [SMT-LIB floating-point theory](https://smt-lib.org/theories-FloatingPoint.shtml)
 - [Dafny reference manual, floating-point types](https://dafny.org/dafny/DafnyRef/DafnyRef#sec-floating-point-types)
+- [Dafny PR #6323, initial `fp32`/`fp64` support](https://github.com/dafny-lang/dafny/pull/6323)
 - [Dafny PR #6514, sound `fp32`/`fp64` verification](https://github.com/dafny-lang/dafny/pull/6514)
+- [Boogie PR #1141, decimal float literal rounding fix](https://github.com/boogie-org/boogie/pull/1141)
 - [Lean floating-point reference](https://lean-lang.org/doc/reference/latest/Basic-Types/Floating-Point-Numbers/)
 - [Lean PR #14079, `Float.Model`](https://github.com/leanprover/lean4/pull/14079)

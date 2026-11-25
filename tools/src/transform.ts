@@ -1759,6 +1759,24 @@ let _callbackCounter = 0;
 let _branchCounter = 0;
 // Active narrowing write-back frames (`someMatch` unwraps & union variant arms).
 let _writeBackFrames: WriteBackFrame[] = [];
+// Declared types of in-scope variables and narrowing binders (for optional-field wrap checks).
+let _varTypes: Map<string, Ty> = new Map();
+
+/** Look up the declared field type reached by walking `fields` from `rootTy`. */
+function lookupFieldTy(rootTy: Ty | undefined, fields: string[], typeDecls: TypeDeclInfo[]): Ty | null {
+  let cur: Ty | undefined = rootTy;
+  for (const field of fields) {
+    if (!cur) return null;
+    if (cur.kind === "optional") cur = cur.inner;
+    if (cur.kind !== "user") return null;
+    const decl = declOfTy(typeDecls, cur);
+    if (!decl || decl.kind !== "record" || !decl.fields) return null;
+    const f = decl.fields.find(fi => fi.name === field);
+    if (!f) return null;
+    cur = f.type ?? parseTsType(f.tsType);
+  }
+  return cur ?? null;
+}
 
 function liftMethodCalls(e: TExpr): { binds: Stmt[]; expr: Expr } {
   const binds: Stmt[] = [];
@@ -1770,6 +1788,7 @@ function liftMethodCalls(e: TExpr): { binds: Stmt[]; expr: Expr } {
 function transformStmt(s: TStmt, typeDecls: TypeDeclInfo[]): Stmt[] {
   switch (s.kind) {
     case "let": {
+      _varTypes.set(s.name, s.ty);
       // Whole-init havoc: emit directly, no lifting
       if (s.init.kind === "havoc") {
         return [{ kind: "let", name: s.name, type: s.ty, mutable: s.mutable, value: { kind: "havoc", type: s.init.ty } }];
@@ -1863,25 +1882,69 @@ function transformStmt(s: TStmt, typeDecls: TypeDeclInfo[]): Stmt[] {
           ...emitWriteBacksForTarget(arrName, _writeBackFrames),
         ];
       }
-      // Non-`this.` dotted field assignment on a record or narrowed optional record
-      // (e.g., `b.count = b.count + 1`): lower through Place frames with write-back.
+      // Non-`this.` dotted field assignment on a record, union variant, or narrowed
+      // optional record (e.g. `b.count = 5`, `u.v = 99`, `u.items[0] = 10`, `u.box.count = 42`):
+      // lower through active `unwrap` & `variant` frames with cascading write-back.
       if (s.target.includes(".") && !s.target.startsWith("this.")) {
         const parts = s.target.split(".");
         const rootVar = parts[0]!;
         const fields = parts.slice(1);
         const { binds, expr } = liftMethodCalls(s.value);
+        const isUndefRhs = s.value.kind === "var" && s.value.name === "undefined";
+        const isOptRhs = s.value.ty.kind === "optional" || isUndefRhs;
         const resolved = resolveWriteTargetThroughFrames(rootVar, fields, _writeBackFrames);
-        if (resolved.leafUnwrapBinder && s.value.ty.kind !== "optional") {
+        if (resolved.leafUnwrapFrame) {
+          const frame = resolved.leafUnwrapFrame;
+          if (!isOptRhs) {
+            return [
+              ...binds,
+              { kind: "assign", target: frame.binder, value: expr },
+              ...emitWriteBacksForTarget(frame.binder, _writeBackFrames),
+            ];
+          }
+          // Assigning `undefined` or an `Option<T>` value to a narrowed optional field:
+          // write directly to the enclosing record field without double-wrapping in `Some`.
+          const optExpr: Expr = isUndefRhs
+            ? { kind: "constructor", name: "none", type: "Option", args: [] }
+            : expr;
+          if (frame.fields.length > 0) {
+            return [
+              ...binds,
+              { kind: "assign", target: frame.rootVar, value: buildNestedFieldExpr(frame.rootVar, frame.fields, optExpr) },
+              ...emitWriteBacksForTarget(frame.rootVar, _writeBackFrames),
+            ];
+          }
           return [
             ...binds,
-            { kind: "assign", target: resolved.leafUnwrapBinder, value: expr },
-            ...emitWriteBacksForTarget(resolved.leafUnwrapBinder, _writeBackFrames),
+            { kind: "assign", target: frame.rootVar, value: optExpr },
+            ...emitWriteBacksForTarget(frame.rootVar, _writeBackFrames),
+          ];
+        }
+        if (resolved.leafVariantBinder) {
+          const binderTy = _varTypes.get(resolved.leafVariantBinder);
+          const rhsExpr = binderTy?.kind === "optional" && !isOptRhs
+            ? { kind: "constructor" as const, name: "some", type: "Option", args: [expr] }
+            : isUndefRhs && binderTy?.kind === "optional"
+              ? { kind: "constructor" as const, name: "none", type: "Option", args: [] }
+              : expr;
+          return [
+            ...binds,
+            { kind: "assign", target: resolved.leafVariantBinder, value: rhsExpr },
+            ...emitWriteBacksForTarget(resolved.leafVariantBinder, _writeBackFrames),
           ];
         }
         if (resolved.remainingFields.length > 0) {
+          const fieldTy = lookupFieldTy(_varTypes.get(resolved.currentRoot), resolved.remainingFields, typeDecls);
+          const rhsExpr = fieldTy?.kind === "optional"
+            ? (isUndefRhs
+                ? { kind: "constructor" as const, name: "none", type: "Option", args: [] }
+                : s.value.ty.kind === "optional"
+                  ? expr
+                  : { kind: "constructor" as const, name: "some", type: "Option", args: [expr] })
+            : expr;
           return [
             ...binds,
-            { kind: "assign", target: resolved.currentRoot, value: buildNestedFieldExpr(resolved.currentRoot, resolved.remainingFields, expr) },
+            { kind: "assign", target: resolved.currentRoot, value: buildNestedFieldExpr(resolved.currentRoot, resolved.remainingFields, rhsExpr) },
             ...emitWriteBacksForTarget(resolved.currentRoot, _writeBackFrames),
           ];
         }
@@ -1969,7 +2032,12 @@ function transformStmt(s: TStmt, typeDecls: TypeDeclInfo[]): Stmt[] {
           const pushed: Expr = { kind: "methodCall", obj: directGet, objTy: (mapExpr.ty as any).value, method: "push", args: [pushArg], monadic: false };
           const updated: Expr = { kind: "methodCall", obj: mapVar, objTy: mapExpr.ty, method: "set", args: [keyExpr, pushed], monadic: false };
           const hasCond: Expr = { kind: "methodCall", obj: mapVar, objTy: mapExpr.ty, method: "has", args: [keyExpr], monadic: false };
-          return [{ kind: "if", cond: hasCond, then: [{ kind: "assign", target: mapName, value: updated }], else: [] }];
+          return [{
+            kind: "if",
+            cond: hasCond,
+            then: [{ kind: "assign", target: mapName, value: updated }, ...emitWriteBacksForTarget(mapName, _writeBackFrames)],
+            else: [],
+          }];
         }
       }
       const { binds, expr } = liftMethodCalls(s.expr);
@@ -2014,6 +2082,7 @@ function transformStmt(s: TStmt, typeDecls: TypeDeclInfo[]): Stmt[] {
       const path = asTAccessPath(s.scrutinee);
       if (path) {
         const replaced = replacePathInTStmts(s.someBody, path, s.binder, s.binderTy);
+        _varTypes.set(s.binder, s.binderTy);
         _writeBackFrames.push(makeUnwrapFrame(s.binder, path.rootVar, path.fields));
         let someBody: Stmt[];
         try {
@@ -2138,8 +2207,11 @@ function emitMatchStmt(
         stmts = replaceVarInTStmts(stmts, prefix, matchBinder(f.name, prefix), f.type ?? parseTsType(f.tsType));
       }
     }
-    const pushVariant = !isPath && !isSynthArrayUnion && !!ctorName && fields.length > 0;
+    const pushVariant = !isPath && !!ctorName && fields.length > 0;
     if (pushVariant) {
+      for (const f of fields) {
+        _varTypes.set(matchBinder(f.name, prefix), f.type ?? parseTsType(f.tsType));
+      }
       _writeBackFrames.push(
         makeVariantFrame(prefix, baseUnionName, ctorName!, fields.map(f => ({ fieldName: f.name, binder: matchBinder(f.name, prefix) }))),
       );
@@ -2268,7 +2340,12 @@ function emitSwitchStmt(s: TStmt & { kind: "switch" }, typeDecls: TypeDeclInfo[]
       : buildMatchArms(cases, s.expr.kind === "var" ? s.expr.name : "?", ctorDecl!.name, typeDecls,
         (body, vn, fields, ctorName) => {
           const pushVariant = !!ctorName && !!vn && vn !== "?" && !!baseName && fields.length > 0;
+          const variantMeta = ctorName ? ctorDecl?.variants?.find(v => v.name === ctorName) : undefined;
           if (pushVariant) {
+            for (const f of fields) {
+              const vf = variantMeta?.fields.find(vf => vf.name === f.name);
+              _varTypes.set(matchBinder(f.name, vn!), vf?.type ?? parseTsType(f.tsType));
+            }
             _writeBackFrames.push(
               makeVariantFrame(vn!, baseName!, ctorName!, fields.map(f => ({ fieldName: f.name, binder: matchBinder(f.name, vn!) }))),
             );
@@ -2807,6 +2884,7 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
 
     _forofCounters.clear();
     _writeBackFrames = [];
+    _varTypes = new Map(fn.params.map(p => [p.name, p.ty]));
     let body = pureDefNames.has(fn.name)
       ? [{ kind: "return" as const, value: { kind: "app" as const, fn: _opts.backend === "lean" ? `Pure.${fn.name}` : fn.name, args: fn.params.map(p => ({ kind: "var" as const, name: p.name })) } }]
       : promoteAssignedLets(transformStmts(fn.body, mod.typeDecls));
@@ -2858,6 +2936,7 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
       const ensures: Expr[] = fn.ensures.map(transformExpr);
       _forofCounters.clear();
       _writeBackFrames = [];
+      _varTypes = new Map(fn.params.map(p => [p.name, p.ty]));
       let body = promoteAssignedLets(transformStmts(fn.body, mod.typeDecls));
       const paramNames = new Set(fn.params.map(p => p.name));
       const reassigned = findReassignedNames(fn.body, paramNames);

@@ -162,62 +162,103 @@ export function findActiveUnwrapFrame(
   return null;
 }
 
-/** Resolve a source dotted path like `["b", "count"]` through any outer active
- *  `unwrap` frames (for example `b` -> `_b_val` -> `_b_count_val`). */
+/** Resolve a source dotted path like `["b", "count"]`, `["u", "v"]`, or
+ *  `["u", "box", "count"]` through any enclosing `unwrap` and `variant` frames.
+ *  Returns:
+ *    - `currentRoot`: the deepest active binder/variable reached,
+ *    - `remainingFields`: any field steps remaining below `currentRoot`,
+ *    - `leafUnwrapFrame`: if the entire path ended at an active `unwrap` frame
+ *      (so non-optional writes update `leafUnwrapFrame.binder` and cascade,
+ *      while `undefined`/optional writes update `leafUnwrapFrame.rootVar`),
+ *    - `leafVariantBinder`: if the entire path ended directly at a union
+ *      variant field binder (e.g. `u.v` -> `i_u_v`). */
 export function resolveWriteTargetThroughFrames(
   rootVar: string,
   fields: string[],
   frames: readonly WriteBackFrame[],
-): { currentRoot: string; remainingFields: string[]; leafUnwrapBinder: string | null } {
+): {
+  currentRoot: string;
+  remainingFields: string[];
+  leafUnwrapFrame: Extract<WriteBackFrame, { kind: "unwrap" }> | null;
+  leafVariantBinder: string | null;
+} {
   let currentRoot = rootVar;
   let idx = 0;
+  let lastUnwrap: Extract<WriteBackFrame, { kind: "unwrap" }> | null = null;
+  let lastVariantBinder: string | null = null;
 
-  // Step 1: check if the root variable itself is currently unwrapped.
-  const rootUnwrap = findActiveUnwrapFrame(currentRoot, [], frames);
-  if (rootUnwrap) {
-    currentRoot = rootUnwrap.binder;
-  }
+  // Iteratively step through active `unwrap` (0-field or prefix-field) and
+  // `variant` (1-field) frames until no more frames match.
+  while (true) {
+    // 1. Bare unwrap on `currentRoot` (e.g. `b` -> `_b_val`, or `u` -> `_u_val`).
+    const bareUnwrap = findActiveUnwrapFrame(currentRoot, [], frames);
+    if (bareUnwrap) {
+      currentRoot = bareUnwrap.binder;
+      lastUnwrap = bareUnwrap;
+      lastVariantBinder = null;
+      continue;
+    }
 
-  // Step 2: walk field prefixes that are themselves unwrapped (e.g., `b.items` -> `_b_items_val`).
-  while (idx < fields.length) {
+    if (idx >= fields.length) break;
+
+    // 2. Variant field projection on `currentRoot` (e.g. `u.v` -> `i_u_v`, `u.box` -> `i_u_box`).
+    let matchedVariant: string | null = null;
+    for (let i = frames.length - 1; i >= 0; i--) {
+      const frame = frames[i]!;
+      if (frame.kind === "variant" && frame.unionVar === currentRoot) {
+        const hit = frame.fields.find(f => f.fieldName === fields[idx]);
+        if (hit) {
+          matchedVariant = hit.binder;
+          break;
+        }
+      }
+    }
+    if (matchedVariant) {
+      currentRoot = matchedVariant;
+      idx += 1;
+      lastUnwrap = null;
+      lastVariantBinder = matchedVariant;
+      continue;
+    }
+
+    // 3. Field-prefix unwrap on `currentRoot` (e.g. `_b_val.items` -> `_b_val_items_val`).
     let matchedLen = 0;
-    let matchedBinder: string | null = null;
+    let matchedUnwrap: Extract<WriteBackFrame, { kind: "unwrap" }> | null = null;
     for (let len = fields.length - idx; len >= 1; len--) {
       const sub = fields.slice(idx, idx + len);
       const hit = findActiveUnwrapFrame(currentRoot, sub, frames);
       if (hit) {
         matchedLen = len;
-        matchedBinder = hit.binder;
+        matchedUnwrap = hit;
         break;
       }
     }
-    if (matchedBinder) {
-      currentRoot = matchedBinder;
+    if (matchedUnwrap) {
+      currentRoot = matchedUnwrap.binder;
       idx += matchedLen;
-      if (idx === fields.length) {
-        return { currentRoot, remainingFields: [], leafUnwrapBinder: matchedBinder };
-      }
-    } else {
-      break;
+      lastUnwrap = matchedUnwrap;
+      lastVariantBinder = null;
+      continue;
     }
+
+    break;
   }
 
   return {
     currentRoot,
     remainingFields: fields.slice(idx),
-    leafUnwrapBinder: idx === 0 && fields.length === 0 && rootUnwrap ? rootUnwrap.binder : null,
+    leafUnwrapFrame: idx === fields.length ? lastUnwrap : null,
+    leafVariantBinder: idx === fields.length ? lastVariantBinder : null,
   };
 }
 
-/** Collect every variable name assigned anywhere in lowered IR `Stmt[]`.
- *  Used to guarantee parameter shadows (`var p := p;`) are emitted whenever a
- *  parameter is written back inside `someMatch`, `tagMatch`, `switch`, or
- *  nested Place updates. */
+/** Collect every variable name assigned anywhere in lowered IR `Stmt[]`
+ *  (both `assign` and Lean monadic `bind`). */
 export function collectAssignedIrTargets(stmts: readonly Stmt[]): Set<string> {
   const assigned = new Set<string>();
   const walk = (ss: readonly Stmt[]) => {
     for (const s of ss) {
-      if (s.kind === "assign" && s.target !== "_" && !s.target.includes(".")) {
+      if ((s.kind === "assign" || s.kind === "bind") && s.target !== "_" && !s.target.includes(".")) {
         assigned.add(s.target);
       } else if (s.kind === "if") {
         walk(s.then);

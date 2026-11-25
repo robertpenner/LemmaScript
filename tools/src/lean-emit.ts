@@ -504,6 +504,9 @@ function emitExpr(e: Expr, parentPrec?: number): string {
 
     case "toInt": return `(Int.ofNat (${emitExpr(e.expr)}))`;
 
+    case "checkedUnwrap":
+      return `((${emitExpr(e.expr)}).get (by grind))`;
+
     case "toReal":
       // A real value reached the Lean backend via coercion (e.g. number `/`).
       // Same unsupported-real story as the `real` type case in tyToLean.

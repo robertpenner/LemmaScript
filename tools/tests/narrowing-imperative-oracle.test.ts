@@ -53,13 +53,13 @@ test("generator produces 100 valid TypeScript modules across all 7 imperative/mu
   }
 });
 
-test("negated-postcondition refutation oracle catches known false-proof fixtures (#350, #304) and passes sound functions (#46)", () => {
+test("negated-postcondition refutation oracle catches #304 false proof, verifies #350 fixed, and rejects live-alias mutation (#46, #49, #50)", () => {
   const project = makeProject();
   const workDir = mkdtempSync(path.join(tmpdir(), "lsc-imp-refute-"));
   try {
-    // 1. Known false proof #350: mutating a narrowed optional array updates only the match binder,
-    //    so reading arr.length after the if-guard sees the pre-push length (2 instead of 3).
-    const bug350: ImperativeProgram = {
+    // 1. #350 is now fixed by Milestone 3a Place write-back: reading arr.length after
+    //    `if (arr !== undefined) { arr.push(9); }` observes the pushed element (3).
+    const fixed350: ImperativeProgram = {
       family: "mutation",
       label: "issue-350-opt-array-push",
       fnName: "target",
@@ -75,12 +75,11 @@ test("negated-postcondition refutation oracle catches known false-proof fixtures
       inputs: [{ args: [{ kind: "opt-int-array", value: [1, 2] }] }],
     };
     const counts350 = createImperativeCounts();
-    const res350 = evaluateImperativeProgram(bug350, { project, workDir, counts: counts350, timeoutSec: 15 });
-    assert.equal(res350.ok, false);
-    assert.equal(res350.oracle, "soundness-refuted", `expected soundness-refuted for #350, got ${res350.oracle}: ${res350.detail}`);
-    assert.equal(counts350.soundnessRefuted, 1);
+    const res350 = evaluateImperativeProgram(fixed350, { project, workDir, counts: counts350, timeoutSec: 15 });
+    assert.equal(res350.ok, true, `expected #350 to pass after Milestone 3a, got ${res350.oracle}: ${res350.detail}`);
+    assert.equal(counts350.passed, 1);
 
-    // 2. Known false proof #304: null vs undefined conflation in `number | null | undefined`.
+    // 2. Known false proof #304 (deferred to Milestone 5): null vs undefined conflation in `number | null | undefined`.
     const bug304: ImperativeProgram = {
       family: "nullish-falsy",
       label: "issue-304-null-vs-undefined",
@@ -158,9 +157,9 @@ test("negated-postcondition refutation oracle catches known false-proof fixtures
     const resUnion = evaluateImperativeProgram(unionProg, { project, workDir, counts: createImperativeCounts(), timeoutSec: 15 });
     assert.equal(resUnion.ok, true, `${resUnion.signature}\n${resUnion.detail}`);
 
-    // 4. Lossless .semantic.json save & replay reproduces #350 soundness-refuted without reshrinking.
-    const casePath = path.join(workDir, "bug350.semantic.json");
-    const saved = saveImperativeCase(casePath, bug350, res350);
+    // 4. Lossless .semantic.json save & replay reproduces #304 soundness-refuted without reshrinking.
+    const casePath = path.join(workDir, "bug304.semantic.json");
+    const saved = saveImperativeCase(casePath, bug304, res304);
     assert.equal(saved.schema, IMPERATIVE_SCHEMA);
     const replayed = replaySavedImperativeCase(casePath, { timeoutSec: 15 });
     assert.equal(replayed.ok, false);
@@ -235,11 +234,9 @@ test("batched dafny run fast screening detects runtime divergence alongside matc
       "  return b.length;",
       "}",
     ].join("\n");
-    const liveAliasTs = [
-      "export function target(a: number[]): number {",
-      "  const b = a;",
-      "  b.push(5);",
-      "  return a.length;",
+    const nullishBugTs = [
+      "export function target(x: number | null | undefined): boolean {",
+      "  return x === null;",
       "}",
     ].join("\n");
     const unionTs = [
@@ -251,16 +248,17 @@ test("batched dafny run fast screening detects runtime divergence alongside matc
     ].join("\n");
 
     const goodCompiled = compileDafnyVariants(goodTs, project);
-    const badCompiled = compileDafnyVariants(liveAliasTs, project);
+    const badCompiled = compileDafnyVariants(nullishBugTs, project);
     const unionCompiled = compileDafnyVariants(unionTs, project);
     assert.equal(goodCompiled.ok, true);
     assert.equal(badCompiled.ok, true);
     assert.equal(unionCompiled.ok, true);
 
     const arg = { kind: "int-array" as const, value: [1, 2] };
+    const nullishArg = { kind: "nullish-int" as const, value: undefined };
     const unionArg = { kind: "union-ab" as const, value: { kind: "a" as const, v: 5 } };
     const goodNode = executeImperativeInNode(goodTs, "target", { args: [arg] }, "number");
-    const badNode = executeImperativeInNode(liveAliasTs, "target", { args: [arg] }, "number");
+    const badNode = executeImperativeInNode(nullishBugTs, "target", { args: [nullishArg] }, "boolean");
     const unionNode = executeImperativeInNode(unionTs, "target", { args: [unionArg] }, "number");
     assert.equal(goodNode.kind, "value");
     assert.equal(badNode.kind, "value");
@@ -283,10 +281,10 @@ test("batched dafny run fast screening detects runtime divergence alongside matc
           expectedJs: unionNode.value,
         },
         {
-          id: "live-alias-mutation",
+          id: "issue-304-null-vs-undefined",
           dfy: badCompiled.compiled.optDfy,
           fnName: "target",
-          dafnyArgs: [imperativeArgToDafny(arg, badCompiled.compiled.optDfy)],
+          dafnyArgs: [imperativeArgToDafny(nullishArg, badCompiled.compiled.optDfy)],
           expectedJs: badNode.value,
         },
       ],
@@ -297,19 +295,20 @@ test("batched dafny run fast screening detects runtime divergence alongside matc
     assert.equal(screen.ok, false);
     assert.equal(screen.matched, 2);
     assert.equal(screen.divergences.length, 1);
-    assert.equal(screen.divergences[0].id, "live-alias-mutation");
-    assert.equal(screen.divergences[0].expected, "3");
-    assert.equal(screen.divergences[0].actual, "2");
+    assert.equal(screen.divergences[0].id, "issue-304-null-vs-undefined");
+    assert.equal(screen.divergences[0].expected, "false");
+    assert.equal(screen.divergences[0].actual, "true");
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
 });
 
-test("imperative campaign exercises --fast-run screening and stage-locked shrinking with pre/opt attribution (#46)", () => {
+test("imperative campaign exercises --fast-run screening and stage-locked shrinking with pre/opt attribution (#46, #50)", () => {
   const outFast = mkdtempSync(path.join(tmpdir(), "lsc-imp-fastrun-"));
   const outShrink = mkdtempSync(path.join(tmpdir(), "lsc-imp-shrink-"));
   try {
-    // 1. fastRun mode screens aliasing batch via `dafny run` and confirms divergence via `dafny verify`.
+    // 1. fastRun mode on aliasing: live-alias-mutation is now explicitly rejected (zero soundness-refuted),
+    //    while dead-source-move and read-only-alias screen cleanly.
     const fastSummary = runImperativeCampaign({
       seed: 1,
       runs: 12,
@@ -318,11 +317,10 @@ test("imperative campaign exercises --fast-run screening and stage-locked shrink
       timeoutSec: 15,
       fastRun: true,
     });
-    assert.ok((fastSummary.fastRunScreened ?? 0) >= 1, "expected fastRunScreened >= 1");
-    assert.ok((fastSummary.fastRunDivergences ?? 0) >= 1, "expected live-alias divergence detected by fastRun");
-    assert.ok(fastSummary.classes.some(c => c.oracle === "soundness-refuted" && c.stage === "both"));
+    assert.equal(fastSummary.counts.soundnessRefuted, 0, "Milestone 3b must eliminate live-alias soundness-refuted");
+    assert.ok(fastSummary.classes.some(c => c.oracle === "rejected" && c.label === "live-alias-mutation"));
 
-    // 2. Standard campaign shrinks live-alias-mutation via fc.check with pre/opt stage attribution.
+    // 2. Standard campaign shrinks live-alias-mutation rejection via fc.check.
     const shrinkSummary = runImperativeCampaign({
       seed: 1,
       runs: 12,
@@ -330,9 +328,9 @@ test("imperative campaign exercises --fast-run screening and stage-locked shrink
       out: outShrink,
       timeoutSec: 15,
     });
-    const cls = shrinkSummary.classes.find(c => c.oracle === "soundness-refuted");
-    assert.ok(cls, "expected shrunk soundness-refuted class");
-    assert.equal(cls.stage, "both");
+    assert.equal(shrinkSummary.counts.soundnessRefuted, 0);
+    const cls = shrinkSummary.classes.find(c => c.oracle === "rejected" && c.label === "live-alias-mutation");
+    assert.ok(cls, "expected shrunk live-alias-mutation rejection class");
   } finally {
     rmSync(outFast, { recursive: true, force: true });
     rmSync(outShrink, { recursive: true, force: true });

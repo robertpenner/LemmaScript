@@ -232,12 +232,12 @@ export function imperativeArgToDafny(arg: ImperativeArg, dfySource: string): str
     case "union-ab": {
       // Detect the generated union constructor names in emitted Dafny.
       if (arg.value.kind === "a") {
-        const m = dfySource.match(/\b(\w*A|\w*_a|A)\s*\(\s*v\s*:/);
-        const ctor = m ? m[1] : "A";
+        const m = dfySource.match(/\b(\w+)\s*\(\s*v\s*:/);
+        const ctor = m ? m[1] : "a";
         return `${ctor}(${dafnyInt(arg.value.v)})`;
       }
-      const m = dfySource.match(/\b(\w*B|\w*_b|B)\s*\(\s*items\s*:/);
-      const ctor = m ? m[1] : "B";
+      const m = dfySource.match(/\b(\w+)\s*\(\s*items\s*:/);
+      const ctor = m ? m[1] : "b";
       return `${ctor}([${arg.value.items.map(dafnyInt).join(", ")}])`;
     }
   }
@@ -302,6 +302,23 @@ export function executeImperativeInNode(
 
 // ── Dafny harness & verification ────────────────────────────
 
+function splitTopLevelCommas(raw: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === "<" || ch === "(" || ch === "[") depth++;
+    else if (ch === ">" || ch === ")" || ch === "]") depth--;
+    else if (ch === "," && depth === 0) {
+      out.push(raw.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(raw.slice(start));
+  return out;
+}
+
 function parseTargetHeader(
   dfy: string,
   fnName: string,
@@ -313,7 +330,7 @@ function parseTargetHeader(
   const rawParams = m[3].trim();
   const paramNames = rawParams === ""
     ? []
-    : rawParams.split(",").map(p => p.trim().split(":")[0].trim());
+    : splitTopLevelCommas(rawParams).map(p => p.trim().split(":")[0].trim());
   const retMatch = m[4].match(/returns\s*\(\s*(\w+)\s*:/);
   const retName = retMatch ? retMatch[1] : null;
   const headerStart = m.index + m[1].length;
@@ -1004,7 +1021,7 @@ function genMutationProgram(): fc.Arbitrary<ImperativeProgram> {
           '    m.delete("del");',
           "  }",
           '  const got = m.get("k");',
-          "  return got !== undefined ? got + m.size : -1;",
+          '  return got !== undefined && !m.has("del") ? got : -1;',
           "}",
         ].join("\n"),
         inputs: [

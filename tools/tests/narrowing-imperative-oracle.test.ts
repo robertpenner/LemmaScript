@@ -118,6 +118,45 @@ test("negated-postcondition refutation oracle catches known false-proof fixtures
     assert.equal(resSound.ok, true, `${resSound.signature}\n${resSound.detail}`);
     assert.equal(countsSound.passed, 1);
 
+    // 3b. Map parameter (`map<string, int>`) and discriminated union constructors (`a`/`b`) parse and verify cleanly.
+    const mapProg: ImperativeProgram = {
+      family: "mutation",
+      label: "map-set-delete-control",
+      fnName: "target",
+      returnKind: "number",
+      tsText: [
+        "export function target(m: Map<string, number>): number {",
+        '  m.set("k", 4);',
+        '  if (m.has("del")) { m.delete("del"); }',
+        '  const got = m.get("k");',
+        '  return got !== undefined && !m.has("del") ? got : -1;',
+        "}",
+      ].join("\n"),
+      inputs: [{ args: [{ kind: "int-map", value: [["del", 1]] }] }],
+    };
+    const resMap = evaluateImperativeProgram(mapProg, { project, workDir, counts: createImperativeCounts(), timeoutSec: 15 });
+    assert.equal(resMap.ok, true, `${resMap.signature}\n${resMap.detail}`);
+
+    const unionProg: ImperativeProgram = {
+      family: "union",
+      label: "union-if-read-control",
+      fnName: "target",
+      returnKind: "number",
+      tsText: [
+        'export type Item = { kind: "a"; v: number } | { kind: "b"; items: number[] };',
+        "export function target(u: Item): number {",
+        '  if (u.kind === "a") return u.v + 2;',
+        "  return u.items.length;",
+        "}",
+      ].join("\n"),
+      inputs: [
+        { args: [{ kind: "union-ab", value: { kind: "a", v: 5 } }] },
+        { args: [{ kind: "union-ab", value: { kind: "b", items: [1, 2, 3] } }] },
+      ],
+    };
+    const resUnion = evaluateImperativeProgram(unionProg, { project, workDir, counts: createImperativeCounts(), timeoutSec: 15 });
+    assert.equal(resUnion.ok, true, `${resUnion.signature}\n${resUnion.detail}`);
+
     // 4. Lossless .semantic.json save & replay reproduces #350 soundness-refuted without reshrinking.
     const casePath = path.join(workDir, "bug350.semantic.json");
     const saved = saveImperativeCase(casePath, bug350, res350);

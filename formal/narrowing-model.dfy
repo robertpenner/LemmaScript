@@ -204,6 +204,32 @@ module NarrowingModel {
     ensures EncodeVal(RepNullish, VArr([])) != EncodeVal(RepNullish, VUndefined)
   {}
 
+  // Explicit pairwise widening coercions across T, T | undefined, T | null, T | null | undefined.
+  function WidenPlainToOptUndef(fv: FVal): FVal { FOptUndef(Some(fv)) }
+  function WidenPlainToOptNull(fv: FVal): FVal { FOptNull(Some(fv)) }
+  function WidenOptUndefToNullish(o: Option<FVal>): Nullish<FVal> {
+    match o
+    case None => NUndefined
+    case Some(v) => NValue(v)
+  }
+  function WidenOptNullToNullish(o: Option<FVal>): Nullish<FVal> {
+    match o
+    case None => NNull
+    case Some(v) => NValue(v)
+  }
+
+  // Theorem 4d: Every pairwise widening coercion is injective and preserves observable erasure.
+  lemma Theorem4_CoercionsInjective(a: FVal, b: FVal, o1: Option<FVal>, o2: Option<FVal>)
+    ensures WidenPlainToOptUndef(a) == WidenPlainToOptUndef(b) ==> a == b
+    ensures WidenPlainToOptNull(a) == WidenPlainToOptNull(b) ==> a == b
+    ensures WidenOptUndefToNullish(o1) == WidenOptUndefToNullish(o2) ==> o1 == o2
+    ensures WidenOptNullToNullish(o1) == WidenOptNullToNullish(o2) ==> o1 == o2
+    ensures EraseFVal(WidenPlainToOptUndef(a)) == EraseFVal(a)
+    ensures EraseFVal(WidenPlainToOptNull(a)) == EraseFVal(a)
+    ensures EraseFVal(FNullish(WidenOptUndefToNullish(o1))) == EraseFVal(FOptUndef(o1))
+    ensures EraseFVal(FNullish(WidenOptNullToNullish(o1))) == EraseFVal(FOptNull(o1))
+  {}
+
   // =========================================================================
   // 2. Places and Lenses on Functional Value Stores (Theorem 3)
   // =========================================================================
@@ -1078,8 +1104,15 @@ module NarrowingModel {
           case CheckFail => CheckFail
           case Ok(fv) =>
             var base := UnwrapAllStorage(fv);
-            if EraseFVal(base).VUndefined? || EraseFVal(base).VNull? then EvalVal(fenv, r)
-            else Ok(base)
+            (match base {
+              case FUndefined => EvalVal(fenv, r)
+              case FNull => EvalVal(fenv, r)
+              case FOptUndef(None) => EvalVal(fenv, r)
+              case FOptNull(None) => EvalVal(fenv, r)
+              case FNullish(NUndefined) => EvalVal(fenv, r)
+              case FNullish(NNull) => EvalVal(fenv, r)
+              case _ => Ok(base)
+            })
         })
       case VGuard(c, b) =>
         (match EvalVal(fenv, c) {
@@ -1113,6 +1146,10 @@ module NarrowingModel {
 
   lemma Lemma_UnwrapAllStoragePreservesErase(fv: FVal)
     ensures EraseFVal(UnwrapAllStorage(fv)) == EraseFVal(fv)
+    ensures var b := UnwrapAllStorage(fv);
+            (EraseFVal(b).VUndefined? || EraseFVal(b).VNull?) <==>
+            (b.FUndefined? || b.FNull? || b == FOptUndef(None) || b == FOptNull(None) ||
+             b == FNullish(NUndefined) || b == FNullish(NNull))
     decreases fv
   {
     match fv
@@ -1190,54 +1227,259 @@ module NarrowingModel {
       Theorem1_And_2_ExprSoundness(hint, inner, fenv, jenv, h, live, depth);
   }
 
+  // Theorem 2b (General Short-Circuit Preservation):
+  // Whenever the controlling operand of `&&`, `||`, `?.`, or `??` short-circuits
+  // in CoreVal, the unevaluated branch (even containing an arbitrary failing
+  // `EGuard(ELitBool(false), ...)`) is NOT evaluated and evaluation succeeds.
+  lemma Theorem2_ShortCircuitPreservation(
+    hint: int -> NarrowHint,
+    fenv: FEnv,
+    e1: Expr,
+    e2: Expr,
+    f: Field
+  )
+    ensures EvalVal(fenv, LowerExpr(hint, e1)) == Ok(FBool(false)) ==>
+            EvalVal(fenv, LowerExpr(hint, EAnd(e1, e2))) == Ok(FBool(false))
+    ensures EvalVal(fenv, LowerExpr(hint, e1)) == Ok(FBool(true)) ==>
+            EvalVal(fenv, LowerExpr(hint, EOr(e1, e2))) == Ok(FBool(true))
+    ensures (EvalVal(fenv, LowerExpr(hint, e1)) == Ok(FUndefined) ||
+             EvalVal(fenv, LowerExpr(hint, e1)) == Ok(FNull) ||
+             EvalVal(fenv, LowerExpr(hint, e1)) == Ok(FOptUndef(None)) ||
+             EvalVal(fenv, LowerExpr(hint, e1)) == Ok(FOptNull(None)) ||
+             EvalVal(fenv, LowerExpr(hint, e1)) == Ok(FNullish(NUndefined)) ||
+             EvalVal(fenv, LowerExpr(hint, e1)) == Ok(FNullish(NNull))) ==>
+            EvalVal(fenv, LowerExpr(hint, EOptField(e1, f))) == Ok(FOptUndef(None))
+    ensures (EvalVal(fenv, LowerExpr(hint, e1)).Ok? &&
+             var base := UnwrapAllStorage(EvalVal(fenv, LowerExpr(hint, e1)).val);
+             !base.FUndefined? && !base.FNull? &&
+             base != FOptUndef(None) && base != FOptNull(None) &&
+             base != FNullish(NUndefined) && base != FNullish(NNull)) ==>
+            EvalVal(fenv, LowerExpr(hint, ENullish(e1, e2))) == Ok(UnwrapAllStorage(EvalVal(fenv, LowerExpr(hint, e1)).val))
+  {}
+
   // =========================================================================
   // 5. Imperative Statements, In-Place Heap Mutation, and Live-Alias Ownership
   // =========================================================================
 
-  // Mutating an array at root variable `x` (either plain or Option-wrapped in CoreVal).
-  // Models `x.push(e)` and narrowed `if (x !== undefined) x.push(e)`.
   datatype Stmt =
     | SSkip
     | SSeq(s1: Stmt, s2: Stmt)
     | SLet(x: Var, rep: StorageRep, init: Expr)
     | SAssign(x: Var, rep: StorageRep, rhs: Expr)
-    | SMutateArrPush(x: Var, unwrapped: bool, elem: Expr)
+    | SMutateArrPush(x: Var, hintId: int, elem: Expr)
+    | SMutateIndexSet(x: Var, hintId: int, idx: int, rhs: Expr)
+    | SMutateFieldSet(x: Var, hintId: int, f: Field, rhs: Expr)
+    | SMutateMapSet(x: Var, hintId: int, key: int, rhs: Expr)
     | SIf(cond: Expr, thenBranch: Stmt, elseBranch: Stmt)
 
   // Live-alias freedom at a mutation of variable `x` with post-mutation live set `liveAfter`:
   // The mutated heap address of `x` must not be reachable from any OTHER variable
   // that remains live after the mutation.
-  // - Read-only aliases: no mutation occurs, so trivially satisfied.
-  // - Dead-source move (`const b = a; b.push(1); return b`): `a !in liveAfter`, so satisfied!
-  // - Live-alias mutation (`const b = a; b.push(1); return a`): `a in liveAfter` and shares addr, so FALSE!
-  predicate NoLiveAliasAtPush(x: Var, jenv: JEnv, h: Heap, liveAfter: set<Var>, depth: nat) {
+  predicate NoLiveAliasAtTarget(x: Var, jenv: JEnv, h: Heap, liveAfter: set<Var>, depth: nat) {
     x in jenv && jenv[x].JRef? &&
     var targetAddr := jenv[x].addr;
-    targetAddr in h && h[targetAddr].HArr? &&
+    targetAddr in h &&
     (forall y :: y in liveAfter && y != x && y in jenv ==>
       targetAddr !in Reachable(h, jenv[y], depth))
   }
 
-  // Push one element onto a JS heap array in place.
-  function StepJS_Push(x: Var, elemVal: Val, jenv: JEnv, h: Heap): Option<Heap>
-  {
-    if x in jenv && jenv[x].JRef? && jenv[x].addr in h && h[jenv[x].addr].HArr? then
+  predicate NoLiveAliasAtPush(x: Var, jenv: JEnv, h: Heap, liveAfter: set<Var>, depth: nat) {
+    NoLiveAliasAtTarget(x, jenv, h, liveAfter, depth) &&
+    h[jenv[x].addr].HArr?
+  }
+
+  function PrimitiveToJVal(v: Val): Option<JVal> {
+    match v
+    case VInt(n) => Some(JInt(n))
+    case VBool(b) => Some(JBool(b))
+    case VUndefined => Some(JUndefined)
+    case VNull => Some(JNull)
+    case _ => None
+  }
+
+  function StepJS_Push(x: Var, elemVal: Val, jenv: JEnv, h: Heap): Option<Heap> {
+    if x in jenv && jenv[x].JRef? && jenv[x].addr in h && h[jenv[x].addr].HArr? && PrimitiveToJVal(elemVal).Some? then
       var a := jenv[x].addr;
-      match elemVal
-      case VInt(n) => Some(h[a := HArr(h[a].elems + [JInt(n)])])
-      case VBool(b) => Some(h[a := HArr(h[a].elems + [JBool(b)])])
-      case VUndefined => Some(h[a := HArr(h[a].elems + [JUndefined])])
-      case VNull => Some(h[a := HArr(h[a].elems + [JNull])])
-      case _ => None
+      Some(h[a := HArr(h[a].elems + [PrimitiveToJVal(elemVal).value])])
     else None
   }
 
-  // Push one element in CoreVal using Place write-back on `PVar(x)` or `PUnwrap(PVar(x))`.
+  function StepJS_IndexSet(x: Var, idx: int, rhsVal: Val, jenv: JEnv, h: Heap): Option<Heap> {
+    if x in jenv && jenv[x].JRef? && jenv[x].addr in h && h[jenv[x].addr].HArr? &&
+       0 <= idx < |h[jenv[x].addr].elems| && PrimitiveToJVal(rhsVal).Some? then
+      var a := jenv[x].addr;
+      Some(h[a := HArr(h[a].elems[idx := PrimitiveToJVal(rhsVal).value])])
+    else None
+  }
+
+  function StepJS_FieldSet(x: Var, f: Field, rhsVal: Val, jenv: JEnv, h: Heap): Option<Heap> {
+    if x in jenv && jenv[x].JRef? && jenv[x].addr in h && h[jenv[x].addr].HRec? &&
+       f in h[jenv[x].addr].fields && PrimitiveToJVal(rhsVal).Some? then
+      var a := jenv[x].addr;
+      Some(h[a := HRec(h[a].fields[f := PrimitiveToJVal(rhsVal).value])])
+    else None
+  }
+
+  function StepJS_MapSet(x: Var, key: int, rhsVal: Val, jenv: JEnv, h: Heap): Option<Heap> {
+    if x in jenv && jenv[x].JRef? && jenv[x].addr in h && h[jenv[x].addr].HMap? &&
+       key in h[jenv[x].addr].entries && PrimitiveToJVal(rhsVal).Some? then
+      var a := jenv[x].addr;
+      Some(h[a := HMap(h[a].entries[key := PrimitiveToJVal(rhsVal).value])])
+    else None
+  }
+
+  // CoreVal mutation lowering driven by `hint(hintId)`:
+  // HintUnwrap lowers to Place write-back through `PUnwrap(PVar(x))` (checked unwrap + Some re-wrap!);
+  // HintNone lowers to direct `PVar(x)` write-back.
+  function TargetPlace(hint: int -> NarrowHint, x: Var, hintId: int): Place {
+    if hint(hintId).HintUnwrap? then PUnwrap(PVar(x)) else PVar(x)
+  }
+
   function StepVal_Push(x: Var, unwrapped: bool, elemFVal: FVal, fenv: FEnv): Option<FEnv> {
     var p := if unwrapped then PUnwrap(PVar(x)) else PVar(x);
-    match ReadPlace(p, fenv)
-    case Some(FArr(elems)) => WritePlace(p, fenv, FArr(elems + [elemFVal]))
-    case _ => None
+    match ReadPlace(p, fenv) {
+      case Some(FArr(elems)) => WritePlace(p, fenv, FArr(elems + [elemFVal]))
+      case _ => None
+    }
+  }
+
+  function StepVal_IndexSet(p: Place, idx: int, rhsFVal: FVal, fenv: FEnv): Option<FEnv> {
+    WritePlace(PIndex(p, idx), fenv, rhsFVal)
+  }
+
+  function StepVal_FieldSet(p: Place, f: Field, rhsFVal: FVal, fenv: FEnv): Option<FEnv> {
+    WritePlace(PField(p, f), fenv, rhsFVal)
+  }
+
+  function StepVal_MapSet(p: Place, key: int, rhsFVal: FVal, fenv: FEnv): Option<FEnv> {
+    WritePlace(PMapKey(p, key), fenv, rhsFVal)
+  }
+
+  // Multi-step statement evaluators for CoreTS and CoreVal (parameterized by `hint`).
+  function ExecJSStmt(s: Stmt, jenv: JEnv, h: Heap, depth: nat): EvalRes<(JEnv, Heap)>
+    decreases s
+  {
+    match s {
+      case SSkip => Ok((jenv, h))
+      case SSeq(s1, s2) =>
+        (match ExecJSStmt(s1, jenv, h, depth) {
+          case CheckFail => CheckFail
+          case Ok((jenv1, h1)) => ExecJSStmt(s2, jenv1, h1, depth)
+        })
+      case SLet(x, rep, init) =>
+        (match EvalJS(jenv, h, init, depth) {
+          case Ok(v) =>
+            if ValidForRep(rep, v) && PrimitiveToJVal(v).Some? then
+              Ok((jenv[x := PrimitiveToJVal(v).value], h))
+            else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SAssign(x, rep, rhs) =>
+        (match EvalJS(jenv, h, rhs, depth) {
+          case Ok(v) =>
+            if x in jenv && ValidForRep(rep, v) && PrimitiveToJVal(v).Some? then
+              Ok((jenv[x := PrimitiveToJVal(v).value], h))
+            else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SMutateArrPush(x, _, elem) =>
+        (match EvalJS(jenv, h, elem, depth) {
+          case Ok(ev) =>
+            var h' := StepJS_Push(x, ev, jenv, h);
+            if h'.Some? then Ok((jenv, h'.value)) else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SMutateIndexSet(x, _, idx, rhs) =>
+        (match EvalJS(jenv, h, rhs, depth) {
+          case Ok(rv) =>
+            var h' := StepJS_IndexSet(x, idx, rv, jenv, h);
+            if h'.Some? then Ok((jenv, h'.value)) else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SMutateFieldSet(x, _, f, rhs) =>
+        (match EvalJS(jenv, h, rhs, depth) {
+          case Ok(rv) =>
+            var h' := StepJS_FieldSet(x, f, rv, jenv, h);
+            if h'.Some? then Ok((jenv, h'.value)) else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SMutateMapSet(x, _, key, rhs) =>
+        (match EvalJS(jenv, h, rhs, depth) {
+          case Ok(rv) =>
+            var h' := StepJS_MapSet(x, key, rv, jenv, h);
+            if h'.Some? then Ok((jenv, h'.value)) else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SIf(cond, t, e) =>
+        (match EvalJS(jenv, h, cond, depth) {
+          case Ok(VBool(true)) => ExecJSStmt(t, jenv, h, depth)
+          case Ok(VBool(false)) => ExecJSStmt(e, jenv, h, depth)
+          case _ => CheckFail
+        })
+    }
+  }
+
+  function ExecValStmt(hint: int -> NarrowHint, s: Stmt, fenv: FEnv): EvalRes<FEnv>
+    decreases s
+  {
+    match s {
+      case SSkip => Ok(fenv)
+      case SSeq(s1, s2) =>
+        (match ExecValStmt(hint, s1, fenv) {
+          case CheckFail => CheckFail
+          case Ok(fenv1) => ExecValStmt(hint, s2, fenv1)
+        })
+      case SLet(x, rep, init) =>
+        (match EvalVal(fenv, LowerExpr(hint, init)) {
+          case Ok(fv) =>
+            var v := EraseFVal(fv);
+            if ValidForRep(rep, v) then Ok(fenv[x := EncodeVal(rep, v)])
+            else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SAssign(x, rep, rhs) =>
+        (match EvalVal(fenv, LowerExpr(hint, rhs)) {
+          case Ok(fv) =>
+            var v := EraseFVal(fv);
+            if x in fenv && ValidForRep(rep, v) then Ok(fenv[x := EncodeVal(rep, v)])
+            else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SMutateArrPush(x, hid, elem) =>
+        (match EvalVal(fenv, LowerExpr(hint, elem)) {
+          case Ok(fv) =>
+            var fenv' := StepVal_Push(x, hint(hid).HintUnwrap?, fv, fenv);
+            if fenv'.Some? then Ok(fenv'.value) else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SMutateIndexSet(x, hid, idx, rhs) =>
+        (match EvalVal(fenv, LowerExpr(hint, rhs)) {
+          case Ok(fv) =>
+            var fenv' := StepVal_IndexSet(TargetPlace(hint, x, hid), idx, fv, fenv);
+            if fenv'.Some? then Ok(fenv'.value) else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SMutateFieldSet(x, hid, f, rhs) =>
+        (match EvalVal(fenv, LowerExpr(hint, rhs)) {
+          case Ok(fv) =>
+            var fenv' := StepVal_FieldSet(TargetPlace(hint, x, hid), f, fv, fenv);
+            if fenv'.Some? then Ok(fenv'.value) else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SMutateMapSet(x, hid, key, rhs) =>
+        (match EvalVal(fenv, LowerExpr(hint, rhs)) {
+          case Ok(fv) =>
+            var fenv' := StepVal_MapSet(TargetPlace(hint, x, hid), key, fv, fenv);
+            if fenv'.Some? then Ok(fenv'.value) else CheckFail
+          case CheckFail => CheckFail
+        })
+      case SIf(cond, t, e) =>
+        (match EvalVal(fenv, LowerExpr(hint, cond)) {
+          case Ok(FBool(true)) => ExecValStmt(hint, t, fenv)
+          case Ok(FBool(false)) => ExecValStmt(hint, e, fenv)
+          case _ => CheckFail
+        })
+    }
   }
 
   lemma Lemma_HeapSeqAppend(h: Heap, s: seq<JVal>, jv: JVal, depth: nat)
@@ -1337,6 +1579,417 @@ module NarrowingModel {
       Lemma_HeapSeqUpdateOutsideReachable(h, a, HArr(h[a].elems + [jElem]), h[a].elems, depth - 1);
       Lemma_HeapSeqAppend(h', h[a].elems, jElem, depth - 1);
       assert HeapVal(h', JRef(a), depth) == Some(VArr(erasedOld + [ev]));
+    }
+  }
+
+  lemma Lemma_HeapSeqUpdate(h: Heap, s: seq<JVal>, idx: int, jv: JVal, depth: nat)
+    requires 0 <= idx < |s|
+    requires HeapSeq(h, s, depth).Some?
+    requires HeapVal(h, jv, depth).Some?
+    ensures |HeapSeq(h, s, depth).value| == |s|
+    ensures HeapSeq(h, s[idx := jv], depth) == Some(HeapSeq(h, s, depth).value[idx := HeapVal(h, jv, depth).value])
+    decreases |s|
+  {
+    if idx == 0 {
+      assert s[0 := jv][0] == jv;
+      assert s[0 := jv][1..] == s[1..];
+      Lemma_HeapSeqLen(h, s[1..], depth);
+      var h0 := HeapVal(h, s[0], depth).value;
+      var t := HeapSeq(h, s[1..], depth).value;
+      var nv := HeapVal(h, jv, depth).value;
+      assert ([h0] + t)[0 := nv] == [nv] + t;
+    } else {
+      assert s[idx := jv][0] == s[0];
+      assert s[idx := jv][1..] == s[1..][idx - 1 := jv];
+      Lemma_HeapSeqUpdate(h, s[1..], idx - 1, jv, depth);
+      var h0 := HeapVal(h, s[0], depth).value;
+      var t := HeapSeq(h, s[1..], depth).value;
+      var nv := HeapVal(h, jv, depth).value;
+      assert ([h0] + t)[idx := nv] == [h0] + t[idx - 1 := nv];
+    }
+  }
+
+  lemma Lemma_HeapSeqLen(h: Heap, s: seq<JVal>, depth: nat)
+    requires HeapSeq(h, s, depth).Some?
+    ensures |HeapSeq(h, s, depth).value| == |s|
+    decreases |s|
+  {
+    if |s| > 0 {
+      Lemma_HeapSeqLen(h, s[1..], depth);
+    }
+  }
+
+  lemma Lemma_TargetPlaceInfo(hint: int -> NarrowHint, x: Var, hid: int, fenv: FEnv)
+    requires ReadPlace(TargetPlace(hint, x, hid), fenv).Some?
+    ensures PlaceRoot(TargetPlace(hint, x, hid)) == x
+    ensures x in fenv && EraseFVal(fenv[x]) == EraseFVal(ReadPlace(TargetPlace(hint, x, hid), fenv).value)
+  {
+    if hint(hid).HintUnwrap? {
+      assert TargetPlace(hint, x, hid) == PUnwrap(PVar(x));
+    } else {
+      assert TargetPlace(hint, x, hid) == PVar(x);
+    }
+  }
+
+  lemma Lemma_PrimitiveToJValHeapVal(h: Heap, v: Val, depth: nat)
+    requires PrimitiveToJVal(v).Some?
+    ensures HeapVal(h, PrimitiveToJVal(v).value, depth) == Some(v)
+  {}
+
+  lemma Theorem1_IndexSetSoundness(
+    hint: int -> NarrowHint,
+    x: Var,
+    hid: int,
+    idx: int,
+    rhs: Expr,
+    fenv: FEnv,
+    jenv: JEnv,
+    h: Heap,
+    liveBefore: set<Var>,
+    liveAfter: set<Var>,
+    depth: nat
+  )
+    requires depth >= 1
+    requires x in liveBefore && FreeVarsExpr(rhs) <= liveBefore && liveAfter <= liveBefore
+    requires StateRefines(fenv, jenv, h, liveBefore, depth)
+    requires NoLiveAliasAtTarget(x, jenv, h, liveAfter, depth) && h[jenv[x].addr].HArr?
+    requires jenv[x].addr !in ReachableSeq(h, h[jenv[x].addr].elems, depth - 1)
+    requires EvalVal(fenv, LowerExpr(hint, rhs)).Ok?
+    requires var fv := EvalVal(fenv, LowerExpr(hint, rhs)).val;
+             StepVal_IndexSet(TargetPlace(hint, x, hid), idx, fv, fenv).Some?
+    requires var ev := EvalJS(jenv, h, rhs, depth);
+             ev.Ok? && PrimitiveToJVal(ev.val).Some?
+    ensures var fv := EvalVal(fenv, LowerExpr(hint, rhs)).val;
+            var fenv' := StepVal_IndexSet(TargetPlace(hint, x, hid), idx, fv, fenv).value;
+            var h' := StepJS_IndexSet(x, idx, EvalJS(jenv, h, rhs, depth).val, jenv, h);
+            h'.Some? && StateRefines(fenv', jenv, h'.value, liveAfter, depth)
+  {
+    Theorem1_And_2_ExprSoundness(hint, rhs, fenv, jenv, h, liveBefore, depth);
+    var fv := EvalVal(fenv, LowerExpr(hint, rhs)).val;
+    var ev := EvalJS(jenv, h, rhs, depth).val;
+    var base := TargetPlace(hint, x, hid);
+    var p := PIndex(base, idx);
+    assert PlaceValid(p, fenv);
+    Lemma_TargetPlaceInfo(hint, x, hid, fenv);
+    var Some(FArr(elems)) := ReadPlace(base, fenv);
+    assert EraseFVal(fenv[x]) == EraseFVal(FArr(elems));
+    var fenv' := StepVal_IndexSet(base, idx, fv, fenv).value;
+    var a := jenv[x].addr;
+    var jElem := PrimitiveToJVal(ev).value;
+    Lemma_PrimitiveToJValHeapVal(h, ev, depth - 1);
+    Lemma_HeapSeqLen(h, h[a].elems, depth - 1);
+    assert |h[a].elems| == |elems| && 0 <= idx < |h[a].elems|;
+    var h' := h[a := HArr(h[a].elems[idx := jElem])];
+    Lemma_WritePlaceRootOnly(p, fenv, fv);
+    assert PlaceRoot(p) == PlaceRoot(base) == x;
+    forall y | y in liveAfter && y != x
+      ensures y in fenv' && y in jenv && ValRefines(fenv'[y], jenv[y], h', depth)
+    {
+      assert fenv'[y] == fenv[y];
+      assert a !in Reachable(h, jenv[y], depth);
+      Lemma_HeapUpdateOutsideReachable(h, a, HArr(h[a].elems[idx := jElem]), jenv[y], depth);
+    }
+    if x in liveAfter {
+      Theorem3_PlaceReadAfterWrite(base, fenv, FArr(elems[idx := fv]));
+      if hint(hid).HintUnwrap? {
+        Theorem3_UnwrapWritePreservesWrapper(PVar(x), fenv, FArr(elems[idx := fv]));
+      }
+      var erasedOld := seq(|elems|, i requires 0 <= i < |elems| => EraseFVal(elems[i]));
+      var erasedNew := seq(|elems|, i requires 0 <= i < |elems| => EraseFVal(elems[idx := fv][i]));
+      assert erasedNew == erasedOld[idx := ev];
+      assert EraseFVal(fenv'[x]) == VArr(erasedNew);
+      Lemma_HeapSeqUpdateOutsideReachable(h, a, HArr(h[a].elems[idx := jElem]), h[a].elems, depth - 1);
+      Lemma_HeapSeqUpdate(h', h[a].elems, idx, jElem, depth - 1);
+      assert HeapVal(h', JRef(a), depth) == Some(VArr(erasedNew));
+    }
+  }
+
+  lemma Theorem1_FieldSetSoundness(
+    hint: int -> NarrowHint,
+    x: Var,
+    hid: int,
+    f: Field,
+    rhs: Expr,
+    fenv: FEnv,
+    jenv: JEnv,
+    h: Heap,
+    liveBefore: set<Var>,
+    liveAfter: set<Var>,
+    depth: nat
+  )
+    requires depth >= 1
+    requires x in liveBefore && FreeVarsExpr(rhs) <= liveBefore && liveAfter <= liveBefore
+    requires StateRefines(fenv, jenv, h, liveBefore, depth)
+    requires NoLiveAliasAtTarget(x, jenv, h, liveAfter, depth) && h[jenv[x].addr].HRec?
+    requires jenv[x].addr !in ReachableFieldMap(h, h[jenv[x].addr].fields, depth - 1)
+    requires EvalVal(fenv, LowerExpr(hint, rhs)).Ok?
+    requires var fv := EvalVal(fenv, LowerExpr(hint, rhs)).val;
+             StepVal_FieldSet(TargetPlace(hint, x, hid), f, fv, fenv).Some?
+    requires var ev := EvalJS(jenv, h, rhs, depth);
+             ev.Ok? && PrimitiveToJVal(ev.val).Some?
+    ensures var fv := EvalVal(fenv, LowerExpr(hint, rhs)).val;
+            var fenv' := StepVal_FieldSet(TargetPlace(hint, x, hid), f, fv, fenv).value;
+            var h' := StepJS_FieldSet(x, f, EvalJS(jenv, h, rhs, depth).val, jenv, h);
+            h'.Some? && StateRefines(fenv', jenv, h'.value, liveAfter, depth)
+  {
+    Theorem1_And_2_ExprSoundness(hint, rhs, fenv, jenv, h, liveBefore, depth);
+    var fv := EvalVal(fenv, LowerExpr(hint, rhs)).val;
+    var ev := EvalJS(jenv, h, rhs, depth).val;
+    var base := TargetPlace(hint, x, hid);
+    var p := PField(base, f);
+    assert PlaceValid(p, fenv);
+    Lemma_TargetPlaceInfo(hint, x, hid, fenv);
+    var Some(FRec(fields)) := ReadPlace(base, fenv);
+    assert EraseFVal(fenv[x]) == EraseFVal(FRec(fields));
+    var fenv' := StepVal_FieldSet(base, f, fv, fenv).value;
+    var a := jenv[x].addr;
+    var jVal := PrimitiveToJVal(ev).value;
+    var m1 := HeapFieldMap(h, h[a].fields, depth - 1).value;
+    var m2 := map k | k in fields :: EraseFVal(fields[k]);
+    assert m1 == m2;
+    assert m1.Keys == h[a].fields.Keys && m2.Keys == fields.Keys;
+    assert h[a].fields.Keys == fields.Keys;
+    assert f in h[a].fields;
+    var newFields := h[a].fields[f := jVal];
+    var h' := h[a := HRec(newFields)];
+    Lemma_PrimitiveToJValHeapVal(h', ev, depth - 1);
+    Lemma_WritePlaceRootOnly(p, fenv, fv);
+    assert PlaceRoot(p) == PlaceRoot(base) == x;
+    forall y | y in liveAfter && y != x
+      ensures y in fenv' && y in jenv && ValRefines(fenv'[y], jenv[y], h', depth)
+    {
+      assert fenv'[y] == fenv[y];
+      assert a !in Reachable(h, jenv[y], depth);
+      Lemma_HeapUpdateOutsideReachable(h, a, HRec(newFields), jenv[y], depth);
+    }
+    if x in liveAfter {
+      var updatedFields := fields[f := fv];
+      Theorem3_PlaceReadAfterWrite(base, fenv, FRec(updatedFields));
+      if hint(hid).HintUnwrap? {
+        Theorem3_UnwrapWritePreservesWrapper(PVar(x), fenv, FRec(updatedFields));
+      }
+      assert EraseFVal(fenv'[x]) == VRec(map k | k in updatedFields :: EraseFVal(updatedFields[k]));
+      Lemma_HeapFieldMapUpdateOutsideReachable(h, a, HRec(newFields), h[a].fields, depth - 1);
+      forall k | k in newFields
+        ensures k in updatedFields && HeapVal(h', newFields[k], depth - 1) == Some(EraseFVal(updatedFields[k]))
+      {
+        if k != f {
+          assert a !in Reachable(h, h[a].fields[k], depth - 1);
+          Lemma_HeapUpdateOutsideReachable(h, a, HRec(newFields), h[a].fields[k], depth - 1);
+        }
+      }
+      assert HeapFieldMap(h', newFields, depth - 1).Some?;
+      assert HeapFieldMap(h', newFields, depth - 1).value == (map k | k in updatedFields :: EraseFVal(updatedFields[k]));
+      assert HeapVal(h', JRef(a), depth) == Some(EraseFVal(fenv'[x]));
+    }
+  }
+
+  lemma Theorem1_MapSetSoundness(
+    hint: int -> NarrowHint,
+    x: Var,
+    hid: int,
+    key: int,
+    rhs: Expr,
+    fenv: FEnv,
+    jenv: JEnv,
+    h: Heap,
+    liveBefore: set<Var>,
+    liveAfter: set<Var>,
+    depth: nat
+  )
+    requires depth >= 1
+    requires x in liveBefore && FreeVarsExpr(rhs) <= liveBefore && liveAfter <= liveBefore
+    requires StateRefines(fenv, jenv, h, liveBefore, depth)
+    requires NoLiveAliasAtTarget(x, jenv, h, liveAfter, depth) && h[jenv[x].addr].HMap?
+    requires jenv[x].addr !in ReachableIntMap(h, h[jenv[x].addr].entries, depth - 1)
+    requires EvalVal(fenv, LowerExpr(hint, rhs)).Ok?
+    requires var fv := EvalVal(fenv, LowerExpr(hint, rhs)).val;
+             StepVal_MapSet(TargetPlace(hint, x, hid), key, fv, fenv).Some?
+    requires var ev := EvalJS(jenv, h, rhs, depth);
+             ev.Ok? && PrimitiveToJVal(ev.val).Some?
+    ensures var fv := EvalVal(fenv, LowerExpr(hint, rhs)).val;
+            var fenv' := StepVal_MapSet(TargetPlace(hint, x, hid), key, fv, fenv).value;
+            var h' := StepJS_MapSet(x, key, EvalJS(jenv, h, rhs, depth).val, jenv, h);
+            h'.Some? && StateRefines(fenv', jenv, h'.value, liveAfter, depth)
+  {
+    Theorem1_And_2_ExprSoundness(hint, rhs, fenv, jenv, h, liveBefore, depth);
+    var fv := EvalVal(fenv, LowerExpr(hint, rhs)).val;
+    var ev := EvalJS(jenv, h, rhs, depth).val;
+    var base := TargetPlace(hint, x, hid);
+    var p := PMapKey(base, key);
+    assert PlaceValid(p, fenv);
+    Lemma_TargetPlaceInfo(hint, x, hid, fenv);
+    var Some(FMap(entries)) := ReadPlace(base, fenv);
+    assert EraseFVal(fenv[x]) == EraseFVal(FMap(entries));
+    var fenv' := StepVal_MapSet(base, key, fv, fenv).value;
+    var a := jenv[x].addr;
+    var jVal := PrimitiveToJVal(ev).value;
+    var m1 := HeapIntMap(h, h[a].entries, depth - 1).value;
+    var m2 := map k | k in entries :: EraseFVal(entries[k]);
+    assert m1 == m2;
+    assert m1.Keys == h[a].entries.Keys && m2.Keys == entries.Keys;
+    assert h[a].entries.Keys == entries.Keys;
+    assert key in h[a].entries;
+    var newEntries := h[a].entries[key := jVal];
+    var h' := h[a := HMap(newEntries)];
+    Lemma_PrimitiveToJValHeapVal(h', ev, depth - 1);
+    Lemma_WritePlaceRootOnly(p, fenv, fv);
+    assert PlaceRoot(p) == PlaceRoot(base) == x;
+    forall y | y in liveAfter && y != x
+      ensures y in fenv' && y in jenv && ValRefines(fenv'[y], jenv[y], h', depth)
+    {
+      assert fenv'[y] == fenv[y];
+      assert a !in Reachable(h, jenv[y], depth);
+      Lemma_HeapUpdateOutsideReachable(h, a, HMap(newEntries), jenv[y], depth);
+    }
+    if x in liveAfter {
+      var updatedEntries := entries[key := fv];
+      Theorem3_PlaceReadAfterWrite(base, fenv, FMap(updatedEntries));
+      if hint(hid).HintUnwrap? {
+        Theorem3_UnwrapWritePreservesWrapper(PVar(x), fenv, FMap(updatedEntries));
+      }
+      assert EraseFVal(fenv'[x]) == VMap(map k | k in updatedEntries :: EraseFVal(updatedEntries[k]));
+      Lemma_HeapIntMapUpdateOutsideReachable(h, a, HMap(newEntries), h[a].entries, depth - 1);
+      forall k | k in newEntries
+        ensures k in updatedEntries && HeapVal(h', newEntries[k], depth - 1) == Some(EraseFVal(updatedEntries[k]))
+      {
+        if k != key {
+          assert a !in Reachable(h, h[a].entries[k], depth - 1);
+          Lemma_HeapUpdateOutsideReachable(h, a, HMap(newEntries), h[a].entries[k], depth - 1);
+        }
+      }
+      assert HeapIntMap(h', newEntries, depth - 1).Some?;
+      assert HeapIntMap(h', newEntries, depth - 1).value == (map k | k in updatedEntries :: EraseFVal(updatedEntries[k]));
+      assert HeapVal(h', JRef(a), depth) == Some(EraseFVal(fenv'[x]));
+    }
+  }
+
+  // Predicate characterizing well-scoped, live-alias-safe statements for multi-step soundness.
+  predicate StmtLiveAliasSafe(s: Stmt, jenv: JEnv, h: Heap, live: set<Var>, depth: nat)
+    decreases s
+  {
+    match s {
+      case SSkip => true
+      case SLet(_, _, init) =>
+        FreeVarsExpr(init) <= live &&
+        (EvalJS(jenv, h, init, depth).Ok? ==> PrimitiveToJVal(EvalJS(jenv, h, init, depth).val).Some?)
+      case SAssign(x, _, rhs) =>
+        x in live && FreeVarsExpr(rhs) <= live &&
+        (EvalJS(jenv, h, rhs, depth).Ok? ==> PrimitiveToJVal(EvalJS(jenv, h, rhs, depth).val).Some?)
+      case SMutateArrPush(x, _, elem) =>
+        depth >= 1 && x in live && FreeVarsExpr(elem) <= live &&
+        NoLiveAliasAtTarget(x, jenv, h, live, depth) && h[jenv[x].addr].HArr? &&
+        jenv[x].addr !in ReachableSeq(h, h[jenv[x].addr].elems, depth - 1) &&
+        (EvalJS(jenv, h, elem, depth).Ok? ==> PrimitiveToJVal(EvalJS(jenv, h, elem, depth).val).Some?)
+      case SMutateIndexSet(x, _, _, rhs) =>
+        depth >= 1 && x in live && FreeVarsExpr(rhs) <= live &&
+        NoLiveAliasAtTarget(x, jenv, h, live, depth) && h[jenv[x].addr].HArr? &&
+        jenv[x].addr !in ReachableSeq(h, h[jenv[x].addr].elems, depth - 1) &&
+        (EvalJS(jenv, h, rhs, depth).Ok? ==> PrimitiveToJVal(EvalJS(jenv, h, rhs, depth).val).Some?)
+      case SMutateFieldSet(x, _, _, rhs) =>
+        depth >= 1 && x in live && FreeVarsExpr(rhs) <= live &&
+        NoLiveAliasAtTarget(x, jenv, h, live, depth) && h[jenv[x].addr].HRec? &&
+        jenv[x].addr !in ReachableFieldMap(h, h[jenv[x].addr].fields, depth - 1) &&
+        (EvalJS(jenv, h, rhs, depth).Ok? ==> PrimitiveToJVal(EvalJS(jenv, h, rhs, depth).val).Some?)
+      case SMutateMapSet(x, _, _, rhs) =>
+        depth >= 1 && x in live && FreeVarsExpr(rhs) <= live &&
+        NoLiveAliasAtTarget(x, jenv, h, live, depth) && h[jenv[x].addr].HMap? &&
+        jenv[x].addr !in ReachableIntMap(h, h[jenv[x].addr].entries, depth - 1) &&
+        (EvalJS(jenv, h, rhs, depth).Ok? ==> PrimitiveToJVal(EvalJS(jenv, h, rhs, depth).val).Some?)
+      case SIf(cond, t, e) =>
+        FreeVarsExpr(cond) <= live &&
+        StmtLiveAliasSafe(t, jenv, h, live, depth) &&
+        StmtLiveAliasSafe(e, jenv, h, live, depth)
+      case SSeq(s1, s2) =>
+        StmtLiveAliasSafe(s1, jenv, h, live, depth) &&
+        (ExecJSStmt(s1, jenv, h, depth).Ok? ==>
+          var (j1, h1) := ExecJSStmt(s1, jenv, h, depth).val;
+          StmtLiveAliasSafe(s2, j1, h1, OutLiveStmt(s1, live), depth))
+    }
+  }
+
+  function OutLiveStmt(s: Stmt, live: set<Var>): set<Var>
+    decreases s
+  {
+    match s {
+      case SLet(x, _, _) => live + {x}
+      case SSeq(s1, s2) => OutLiveStmt(s2, OutLiveStmt(s1, live))
+      case SIf(_, t, e) => OutLiveStmt(t, live) * OutLiveStmt(e, live)
+      case _ => live
+    }
+  }
+
+  // Theorem 1 (Full Multi-Step Statement Soundness under Arbitrary Hint):
+  // Covers SSkip, SSeq, SLet (lexical shadowing), SAssign (reassignment), SIf,
+  // and all 4 Place-lowered mutations (push, indexSet, fieldSet, mapSet).
+  lemma Theorem1_StmtSoundness(
+    hint: int -> NarrowHint,
+    s: Stmt,
+    fenv: FEnv,
+    jenv: JEnv,
+    h: Heap,
+    live: set<Var>,
+    depth: nat
+  )
+    requires depth >= 1
+    requires StateRefines(fenv, jenv, h, live, depth)
+    requires StmtLiveAliasSafe(s, jenv, h, live, depth)
+    ensures ExecValStmt(hint, s, fenv).Ok? ==>
+            ExecJSStmt(s, jenv, h, depth).Ok? &&
+            var (jenv', h') := ExecJSStmt(s, jenv, h, depth).val;
+            StateRefines(ExecValStmt(hint, s, fenv).val, jenv', h', OutLiveStmt(s, live), depth)
+    decreases s
+  {
+    if !ExecValStmt(hint, s, fenv).Ok? {
+      return;
+    }
+    match s {
+      case SSkip =>
+      case SLet(x, rep, init) =>
+        Theorem1_And_2_ExprSoundness(hint, init, fenv, jenv, h, live, depth);
+        var Ok(fv) := EvalVal(fenv, LowerExpr(hint, init));
+        Theorem4_EncodeEraseRoundtrip(rep, EraseFVal(fv));
+      case SAssign(x, rep, rhs) =>
+        Theorem1_And_2_ExprSoundness(hint, rhs, fenv, jenv, h, live, depth);
+        var Ok(fv) := EvalVal(fenv, LowerExpr(hint, rhs));
+        Theorem4_EncodeEraseRoundtrip(rep, EraseFVal(fv));
+      case SMutateArrPush(x, hid, elem) =>
+        Theorem1_And_2_ExprSoundness(hint, elem, fenv, jenv, h, live, depth);
+        Theorem1_PushMutationSoundness(
+          hint, x, hint(hid).HintUnwrap?, elem,
+          fenv, jenv, h, live, live, depth
+        );
+      case SMutateIndexSet(x, hid, idx, rhs) =>
+        Theorem1_And_2_ExprSoundness(hint, rhs, fenv, jenv, h, live, depth);
+        Theorem1_IndexSetSoundness(
+          hint, x, hid, idx, rhs,
+          fenv, jenv, h, live, live, depth
+        );
+      case SMutateFieldSet(x, hid, f, rhs) =>
+        Theorem1_And_2_ExprSoundness(hint, rhs, fenv, jenv, h, live, depth);
+        Theorem1_FieldSetSoundness(
+          hint, x, hid, f, rhs,
+          fenv, jenv, h, live, live, depth
+        );
+      case SMutateMapSet(x, hid, key, rhs) =>
+        Theorem1_And_2_ExprSoundness(hint, rhs, fenv, jenv, h, live, depth);
+        Theorem1_MapSetSoundness(
+          hint, x, hid, key, rhs,
+          fenv, jenv, h, live, live, depth
+        );
+      case SIf(cond, t, e) =>
+        Theorem1_And_2_ExprSoundness(hint, cond, fenv, jenv, h, live, depth);
+        var Ok(FBool(b)) := EvalVal(fenv, LowerExpr(hint, cond));
+        if b {
+          Theorem1_StmtSoundness(hint, t, fenv, jenv, h, live, depth);
+        } else {
+          Theorem1_StmtSoundness(hint, e, fenv, jenv, h, live, depth);
+        }
+      case SSeq(s1, s2) =>
+        Theorem1_StmtSoundness(hint, s1, fenv, jenv, h, live, depth);
+        var Ok(fenv1) := ExecValStmt(hint, s1, fenv);
+        var Ok((jenv1, h1)) := ExecJSStmt(s1, jenv, h, depth);
+        Theorem1_StmtSoundness(hint, s2, fenv1, jenv1, h1, OutLiveStmt(s1, live), depth);
     }
   }
 

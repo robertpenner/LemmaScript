@@ -94,7 +94,46 @@ theorem isBytes_iff (s : Option String) :
   simp [Pure_isBytes]
 
 -- =========================================================================
--- 4. Soundness check: an unguarded checked read in a pure function DOES NOT
+-- 4. Place-style functional update (preserving `some` wrapper and sibling
+--    fields) plus monadic state-method counterpart.
+-- =========================================================================
+
+structure Box where
+  items : Array Int
+  tag : Int
+
+/-- Pure Place-style write-back: `PField(PUnwrap(PVar box), items)` push. -/
+def pushBoxItemPure (box : Option Box) (x : Int) : Option Box :=
+  if h : box.isSome then
+    let b := box.get h
+    some { b with items := b.items.push x }
+  else
+    none
+
+/-- Imperative method-style counterpart using `StateM` + `optionValue`. -/
+def pushBoxItemMethod (x : Int) : StateM (Option Box) Bool := do
+  let cur ← get
+  if cur.isSome then
+    match optionValue cur with
+    | some b =>
+      set (some { b with items := b.items.push x })
+      return true
+    | none => return false
+  else
+    return false
+
+theorem pushBoxItem_preserves_wrapper_and_sibling (b : Box) (x : Int) :
+    pushBoxItemPure (some b) x = some { items := b.items.push x, tag := b.tag } := by
+  simp [pushBoxItemPure]
+
+theorem pushBoxItemMethod_agrees_with_pure (box : Option Box) (x : Int) :
+    (pushBoxItemMethod x).run box = (box.isSome, pushBoxItemPure box x) := by
+  cases box with
+  | none => rfl
+  | some b => rfl
+
+-- =========================================================================
+-- 5. Soundness check: an unguarded checked read in a pure function DOES NOT
 --    elaborate (cannot silently erase the check or synthesize a default):
 --    `def bad (x : Option Int) : Int := x.get (by assumption)` fails to typecheck.
 -- =========================================================================

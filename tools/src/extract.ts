@@ -697,7 +697,7 @@ function extractExpr(node: Expression): RawExpr {
     for (const prop of node.getProperties()) {
       if (Node.isSpreadAssignment(prop)) {
         const s = extractExpr(prop.getExpression());
-        acc = acc === null ? s : { kind: "recordMerge", base: acc, override: s };
+        acc = acc === null ? markFreshClone(s) : { kind: "recordMerge", base: acc, override: s };
       } else if (Node.isShorthandPropertyAssignment(prop)) {
         const name = prop.getName();
         update(name, { kind: "var", name: sourceName(prop.getNameNode()) });
@@ -1359,6 +1359,9 @@ function typeToString(type: Type): string {
 }
 
 function markFreshClone(e: RawExpr): RawExpr {
+  if (e.kind === "nonNull") {
+    return { ...e, expr: markFreshClone(e.expr) };
+  }
   if (e.kind === "var" || e.kind === "field" || e.kind === "index" || e.kind === "call") {
     return { ...e, freshClone: true };
   }

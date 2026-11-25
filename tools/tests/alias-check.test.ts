@@ -226,3 +226,160 @@ test("imperative soundness oracle confirms live-alias-mutation is rejected while
     rmSync(workDir, { recursive: true, force: true });
   }
 });
+
+test("review regressions (#50): break/continue liveness & forward escape, ternary/nullish/optChain aliases, shallow-copy nested mutation vs outer mutation, nonNull clones, this.field, m.values(), and lambdas", () => {
+  // Issue 5a: break backward liveness (`if (flag) { b.push(1); break; } return 0;` before `return a.length;`)
+  assert.ok(checkAliasesOfSource([
+    "export function target(a: number[], flag: boolean): number {",
+    "  const b = a;",
+    "  let i = 0;",
+    "  while (i < 1) {",
+    "    if (flag) { b.push(1); break; }",
+    "    return 0;",
+    "  }",
+    "  return a.length;",
+    "}",
+  ].join("\n")).length >= 1, "break backward liveness must catch live-alias mutation");
+
+  // Issue 5b: break forward alias escape (`if (flag) { b = a; break; } b = [];` then `b.push(1); return a.length;`)
+  assert.ok(checkAliasesOfSource([
+    "export function target(a: number[], flag: boolean): number {",
+    "  let b: number[] = [];",
+    "  let i = 0;",
+    "  while (i < 1) {",
+    "    if (flag) { b = a; break; }",
+    "    b = [];",
+    "    i = i + 1;",
+    "  }",
+    "  b.push(1);",
+    "  return a.length;",
+    "}",
+  ].join("\n")).length >= 1, "break forward alias escape must be caught");
+
+  // Issue 5c: continue backward liveness inside loop
+  assert.ok(checkAliasesOfSource([
+    "export function target(a: number[], flag: boolean): number {",
+    "  const b = a;",
+    "  let i = 0;",
+    "  let total = 0;",
+    "  while (i < 2) {",
+    "    total = total + a.length;",
+    "    i = i + 1;",
+    "    if (flag) { b.push(1); continue; }",
+    "    return total;",
+    "  }",
+    "  return total;",
+    "}",
+  ].join("\n")).length >= 1, "continue backward liveness must catch live-alias mutation");
+
+  // Issue 6: conditional, nullish coalescing, and optional chaining aliases
+  assert.ok(checkAliasesOfSource([
+    "export function target(a: number[], flag: boolean): number {",
+    "  const b = flag ? a : [9];",
+    "  b.push(1);",
+    "  return a.length;",
+    "}",
+  ].join("\n")).length >= 1, "ternary alias must be caught");
+
+  assert.ok(checkAliasesOfSource([
+    "export function target(a?: number[]): number {",
+    "  const b = a ?? [];",
+    "  b.push(1);",
+    "  return a !== undefined ? a.length : 0;",
+    "}",
+  ].join("\n")).length >= 1, "nullish coalescing alias must be caught");
+
+  assert.ok(checkAliasesOfSource([
+    "export interface Box { items?: number[] }",
+    "export function target(b?: Box): number {",
+    "  const sub = b?.items;",
+    "  if (sub !== undefined) sub.push(1);",
+    "  return b !== undefined && b.items !== undefined ? b.items.length : 0;",
+    "}",
+  ].join("\n")).length >= 1, "optional chain alias must be caught");
+
+  // Issue 7a: shallow copy `{ ...a, count: 2 }` with NESTED mutation `b.items.push(99)` -> REJECTED!
+  assert.ok(checkAliasesOfSource([
+    "export interface Box { count: number; items: number[] }",
+    "export function target(a: Box): number {",
+    "  const b = { ...a, count: 2 };",
+    "  b.items.push(99);",
+    "  return a.items.length;",
+    "}",
+  ].join("\n")).length >= 1, "shallow record spread + nested push must be caught");
+
+  // Issue 7b: shallow copy `new Map(m)` with NESTED `m2.get("k")?.push(99)` -> REJECTED!
+  assert.ok(checkAliasesOfSource([
+    "export function target(m: Map<string, number[]>): number {",
+    "  const m2 = new Map(m);",
+    '  m2.get("k")?.push(99);',
+    '  const orig = m.get("k");',
+    "  return orig !== undefined ? orig.length : 0;",
+    "}",
+  ].join("\n")).length >= 1, "shallow Map clone + nested push must be caught");
+
+  // Issue 7c: shallow copy `new Map(m)` with TOP-LEVEL `m2.set("k", [])` -> ALLOWED (like todo-domain.ts)!
+  assert.equal(checkAliasesOfSource([
+    "export function target(m: Map<string, number[]>): number {",
+    "  const m2 = new Map(m);",
+    '  m2.set("k", []);',
+    "  return m.size + m2.size;",
+    "}",
+  ].join("\n")).length, 0, "shallow Map clone + top-level set is sound in JS");
+
+  // Issue 8a: single-spread `{ ...a }` on primitive record -> ALLOWED!
+  assert.equal(checkAliasesOfSource([
+    "export interface Box { count: number }",
+    "export function target(a: Box): number {",
+    "  const b = { ...a };",
+    "  b.count = 5;",
+    "  return a.count + b.count;",
+    "}",
+  ].join("\n")).length, 0, "single-spread clone of primitive record is sound");
+
+  // Issue 8b: non-null assertion clones `[...a!]`, `new Map(m!)`, `new Set(s!)` -> ALLOWED!
+  assert.equal(checkAliasesOfSource([
+    "export function target(a?: number[], m?: Map<string, number>, s?: Set<number>): number {",
+    "  const a2 = [...a!];",
+    "  a2.push(1);",
+    "  const m2 = new Map(m!);",
+    '  m2.set("k", 2);',
+    "  const s2 = new Set(s!);",
+    "  s2.add(3);",
+    "  return (a !== undefined ? a.length : 0) + a2.length + (m !== undefined ? m.size : 0) + m2.size + (s !== undefined ? s.size : 0) + s2.size;",
+    "}",
+  ].join("\n")).length, 0, "non-null clones must not be falsely flagged");
+
+  // Issue 9a: class `this.items` aliasing -> REJECTED!
+  assert.ok(checkAliasesOfSource([
+    "export class Counter {",
+    "  items: number[] = [];",
+    "  bump(): number {",
+    "    //@ verify",
+    "    const before = this.items.length;",
+    "    const b = this.items;",
+    "    b.push(2);",
+    "    return this.items.length - before;",
+    "  }",
+    "}",
+  ].join("\n")).length >= 1, "class this.field live-alias mutation must be caught");
+
+  // Issue 9b: `for (const arr of m.values()) { arr.push(1); }` -> REJECTED when `m` is read after!
+  assert.ok(checkAliasesOfSource([
+    "export function target(m: Map<string, number[]>): number {",
+    "  for (const arr of m.values()) {",
+    "    arr.push(1);",
+    "  }",
+    "  return m.size;",
+    "}",
+  ].join("\n")).length >= 1, "for..of over m.values() mutating element while m is live must be caught");
+
+  // Issue 9c: live-alias mutation inside lambda body -> REJECTED!
+  assert.ok(checkAliasesOfSource([
+    "export function target(a: number[], xs: number[]): number {",
+    "  const b = a;",
+    "  const ys = xs.map(x => { b.push(x); return x; });",
+    "  return a.length + ys.length;",
+    "}",
+  ].join("\n")).length >= 1, "live-alias mutation inside lambda must be caught");
+});

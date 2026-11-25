@@ -306,33 +306,47 @@ test("batched dafny run fast screening detects runtime divergence alongside matc
 test("imperative campaign exercises --fast-run screening and stage-locked shrinking with pre/opt attribution (#46, #50)", () => {
   const outFast = mkdtempSync(path.join(tmpdir(), "lsc-imp-fastrun-"));
   const outShrink = mkdtempSync(path.join(tmpdir(), "lsc-imp-shrink-"));
+  const outAlias = mkdtempSync(path.join(tmpdir(), "lsc-imp-alias-"));
   try {
-    // 1. fastRun mode on aliasing: live-alias-mutation is now explicitly rejected (zero soundness-refuted),
-    //    while dead-source-move and read-only-alias screen cleanly.
+    // 1. fastRun mode on nullish-falsy (#304): screens batch and confirms
+    //    soundness-refuted divergence via `dafny verify` on both pre and opt stages.
     const fastSummary = runImperativeCampaign({
       seed: 1,
       runs: 12,
-      families: ["aliasing"],
+      families: ["nullish-falsy"],
       out: outFast,
       timeoutSec: 15,
       fastRun: true,
     });
-    assert.equal(fastSummary.counts.soundnessRefuted, 0, "Milestone 3b must eliminate live-alias soundness-refuted");
-    assert.ok(fastSummary.classes.some(c => c.oracle === "rejected" && c.label === "live-alias-mutation"));
+    assert.ok((fastSummary.fastRunScreened ?? 0) >= 1, "expected fastRunScreened >= 1");
+    assert.ok(fastSummary.classes.some(c => c.oracle === "soundness-refuted" && c.stage === "both"));
 
-    // 2. Standard campaign shrinks live-alias-mutation rejection via fc.check.
+    // 2. Standard campaign shrinks #304 soundness-refuted via stage-locked fc.check.
     const shrinkSummary = runImperativeCampaign({
       seed: 1,
-      runs: 12,
-      families: ["aliasing"],
+      runs: 10,
+      families: ["nullish-falsy"],
       out: outShrink,
       timeoutSec: 15,
     });
-    assert.equal(shrinkSummary.counts.soundnessRefuted, 0);
-    const cls = shrinkSummary.classes.find(c => c.oracle === "rejected" && c.label === "live-alias-mutation");
-    assert.ok(cls, "expected shrunk live-alias-mutation rejection class");
+    const cls = shrinkSummary.classes.find(c => c.oracle === "soundness-refuted");
+    assert.ok(cls, "expected shrunk #304 soundness-refuted class");
+    assert.equal(cls.stage, "both");
+
+    // 3. Aliasing family: live-alias-mutation is explicitly rejected (zero soundness-refuted).
+    const aliasSummary = runImperativeCampaign({
+      seed: 1,
+      runs: 12,
+      families: ["aliasing"],
+      out: outAlias,
+      timeoutSec: 15,
+      fastRun: true,
+    });
+    assert.equal(aliasSummary.counts.soundnessRefuted, 0, "Milestone 3b must eliminate live-alias soundness-refuted");
+    assert.ok(aliasSummary.classes.some(c => c.oracle === "rejected" && c.label === "live-alias-mutation"));
   } finally {
     rmSync(outFast, { recursive: true, force: true });
     rmSync(outShrink, { recursive: true, force: true });
+    rmSync(outAlias, { recursive: true, force: true });
   }
 });

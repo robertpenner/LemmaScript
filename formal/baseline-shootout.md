@@ -19,8 +19,9 @@ Both branches ran the exact same 40-program seed (`--seed 1 --runs 40`). Three f
 - **Branches evaluated:**
   - `midspiral/main` (`f991de5`, current `someMatch` pipeline)
   - `midspiral/redesign-narrowing` (`261609a`, midspiral/LemmaScript#379 checked-reads prototype)
+- **Harness revision for scorecard table:** `29d0636` (captured in `f1bbb2e`, 25 variants, single-sample `opt`-stage run). Subsequent hardening in `1201487` expanded the generator to 33 variants (adding empty-string/false/empty-array falsy traps, `!==`/`<=`/`||`/`?.`/call-arg guard positions, real nested-field reassignment, and post-branch reads on `nested-box-push` and `union-switch-mutate`), switched campaigns to stage-locked `fc.check` shrinking, and defaulted evaluation and `--case` replay to both `pre` and `opt` stages; the saved `.semantic.json` artifacts under `formal/shootout-artifacts/{main,pr379}/` were re-recorded with `pre`+`opt` checks (`stage: "both"`) and verified to replay deterministically.
 - **Toolchain:** Node `v24.17.0`, Dafny `4.11.0+fcb2042d6d043a2634f0854338c08feeaaaf4ae2`.
-- **Exact CLI command (identical on both branches):**
+- **Exact CLI command (run at harness revision `29d0636`, identical on both branches):**
 
 ```sh
 cd tools

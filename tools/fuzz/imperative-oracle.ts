@@ -752,7 +752,7 @@ export function replaySavedImperativeCase(
         tsText: raw.tsText,
         inputs: raw.inputs,
       },
-      { project, workDir, counts, timeoutSec: opts?.timeoutSec ?? 15, stages: opts?.stages ?? ["opt"] },
+      { project, workDir, counts, timeoutSec: opts?.timeoutSec ?? 15, stages: opts?.stages ?? ["pre", "opt"] },
     );
   } finally {
     rmSync(workDir, { recursive: true, force: true });
@@ -1677,11 +1677,11 @@ export function runImperativeCampaign(opts: ImperativeCampaignOptions): Imperati
           verifyQueue.push(prog);
           continue;
         }
-        let hasPrecond = false;
+        let needsDirectVerify = false;
         for (let ii = 0; ii < prog.inputs.length; ii++) {
           const nodeRes = executeImperativeInNode(prog.tsText, prog.fnName, prog.inputs[ii], prog.returnKind);
-          if (nodeRes.kind === "precondition-violated") {
-            hasPrecond = true;
+          if (nodeRes.kind === "precondition-violated" || nodeRes.kind === "runtime-error") {
+            needsDirectVerify = true;
           } else if (nodeRes.kind === "value") {
             const id = `p${pi}_i${ii}`;
             batchEntries.push({
@@ -1694,7 +1694,7 @@ export function runImperativeCampaign(opts: ImperativeCampaignOptions): Imperati
             progByEntry.set(id, prog);
           }
         }
-        if (hasPrecond) verifyQueue.push(prog);
+        if (needsDirectVerify) verifyQueue.push(prog);
       }
 
       if (batchEntries.length > 0) {
@@ -1722,8 +1722,9 @@ export function runImperativeCampaign(opts: ImperativeCampaignOptions): Imperati
           timeoutSec: opts.timeoutSec,
           stages,
         });
-        if (!outcome.ok && outcome.oracle && !seen.has(outcome.signature)) {
-          seen.add(outcome.signature);
+        const lockKey = `${outcome.signature}@${outcome.stage ?? "none"}`;
+        if (!outcome.ok && outcome.oracle && !seen.has(lockKey)) {
+          seen.add(lockKey);
           const idx = classes.length + 1;
           const tsFile = path.join(opts.out, `${idx}.ts`);
           const caseFile = path.join(opts.out, `${idx}.semantic.json`);
@@ -1744,17 +1745,23 @@ export function runImperativeCampaign(opts: ImperativeCampaignOptions): Imperati
         }
       }
     } else {
-      // Standard verification campaign with stage-locked `fc.check` shrinking per distinct failure class.
+      // Standard verification campaign with stage-locked `fc.check` shrinking per distinct (signature, stage).
       const maxRounds = Math.max(1, Math.min(20, opts.runs));
       let remaining = opts.runs;
       for (let round = 0; round < maxRounds && remaining > 0; round++) {
-        let lockedSig: string | null = null;
+        let lockedKey: string | null = null;
         let shrunkProg: ImperativeProgram | null = null;
         let shrunkOutcome: ImperativeOutcome | null = null;
         let evalsInRound = 0;
+        let shrinkEvals = 0;
+        const MAX_SHRINK_EVALS = 12;
 
         const prop = fc.property(imperativeProgramArb(opts.families), (prog) => {
           evalsInRound++;
+          if (lockedKey !== null) {
+            if (shrinkEvals >= MAX_SHRINK_EVALS) return true;
+            shrinkEvals++;
+          }
           const outcome = evaluateImperativeProgram(prog, {
             project,
             workDir,
@@ -1763,14 +1770,15 @@ export function runImperativeCampaign(opts: ImperativeCampaignOptions): Imperati
             stages,
           });
           if (outcome.ok || !outcome.oracle) return true;
-          if (seen.has(outcome.signature)) return true;
-          if (lockedSig === null) {
-            lockedSig = outcome.signature;
+          const lockKey = `${outcome.signature}@${outcome.stage ?? "none"}`;
+          if (seen.has(lockKey)) return true;
+          if (lockedKey === null) {
+            lockedKey = lockKey;
             shrunkProg = prog;
             shrunkOutcome = outcome;
             return false;
           }
-          if (outcome.signature === lockedSig) {
+          if (lockKey === lockedKey) {
             shrunkProg = prog;
             shrunkOutcome = outcome;
             return false;
@@ -1785,12 +1793,12 @@ export function runImperativeCampaign(opts: ImperativeCampaignOptions): Imperati
         });
         remaining -= Math.min(remaining, Math.max(1, checkRes.numRuns));
 
-        if (!checkRes.failed || !lockedSig || !shrunkProg || !shrunkOutcome) {
+        if (!checkRes.failed || !lockedKey || !shrunkProg || !shrunkOutcome) {
           break;
         }
         const finalProg: ImperativeProgram = shrunkProg;
         const finalOutcome: ImperativeOutcome = shrunkOutcome;
-        seen.add(lockedSig);
+        seen.add(lockedKey);
         const idx = classes.length + 1;
         const tsFile = path.join(opts.out, `${idx}.ts`);
         const caseFile = path.join(opts.out, `${idx}.semantic.json`);

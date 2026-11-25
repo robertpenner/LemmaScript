@@ -31,10 +31,49 @@
     }
   ],
   "oracle": "soundness-refuted",
-  "stage": "opt",
+  "stage": "both",
   "signature": "soundness-refuted (nullish-falsy/null-vs-undefined-eq)",
   "detail": "CRITICAL: Node returned false for target(Option.None), yet Dafny proved result != false.",
   "checks": [
+    {
+      "inputIndex": 0,
+      "nodeOutcome": {
+        "kind": "value",
+        "value": true
+      },
+      "dafnyArgs": [
+        "Option.None"
+      ],
+      "stage": "pre",
+      "status": "ok",
+      "detail": "verified"
+    },
+    {
+      "inputIndex": 1,
+      "nodeOutcome": {
+        "kind": "value",
+        "value": false
+      },
+      "dafnyArgs": [
+        "Option.None"
+      ],
+      "stage": "pre",
+      "status": "soundness-refuted",
+      "detail": "Dafny program verifier finished with 1 verified, 0 errors"
+    },
+    {
+      "inputIndex": 2,
+      "nodeOutcome": {
+        "kind": "value",
+        "value": false
+      },
+      "dafnyArgs": [
+        "Option.Some(0)"
+      ],
+      "stage": "pre",
+      "status": "ok",
+      "detail": "verified"
+    },
     {
       "inputIndex": 0,
       "nodeOutcome": {

@@ -1898,8 +1898,8 @@ module NarrowingModel {
         (EvalJS(jenv, h, rhs, depth).Ok? ==> PrimitiveToJVal(EvalJS(jenv, h, rhs, depth).val).Some?)
       case SIf(cond, t, e) =>
         FreeVarsExpr(cond) <= live &&
-        StmtLiveAliasSafe(t, jenv, h, live, depth) &&
-        StmtLiveAliasSafe(e, jenv, h, live, depth)
+        (EvalJS(jenv, h, cond, depth) == Ok(VBool(true)) ==> StmtLiveAliasSafe(t, jenv, h, live, depth)) &&
+        (EvalJS(jenv, h, cond, depth) == Ok(VBool(false)) ==> StmtLiveAliasSafe(e, jenv, h, live, depth))
       case SSeq(s1, s2) =>
         StmtLiveAliasSafe(s1, jenv, h, live, depth) &&
         (ExecJSStmt(s1, jenv, h, depth).Ok? ==>
@@ -2069,5 +2069,25 @@ module NarrowingModel {
     var andExpr := EAnd(ELitBool(false), EGuard(ELitBool(false), ELitBool(true)));
     assert EvalJS(jenv, h, andExpr, 1) == Ok(VBool(false));
     assert EvalVal(fenv, LowerExpr(idHint, andExpr)) == Ok(FBool(false));
+  }
+
+  // Sanity (e): Narrowing-guarded mutation `if (arr !== undefined) { arr.push(7); }`
+  // satisfies StmtLiveAliasSafe and Theorem1_StmtSoundness on the `None` path too
+  // (untaken `then` branch is not required to satisfy NoLiveAliasAtTarget).
+  lemma Sanity_NarrowingGuardedPushOnNonePath()
+  {
+    var unwrapHint: int -> NarrowHint := (_ => HintUnwrap);
+    var fenv: FEnv := map["arr" := FOptUndef(None)];
+    var jenv: JEnv := map["arr" := JUndefined];
+    var h: Heap := map[];
+    var live := {"arr"};
+    // `cond` models `arr !== undefined` as `!(arr === undefined)` via `EEq(EVar("arr"), EUndefined)` in `else`.
+    var s := SIf(EEq(EVar("arr"), EUndefined), SSkip, SMutateArrPush("arr", 0, ELitInt(7)));
+    assert StateRefines(fenv, jenv, h, live, 1);
+    assert EvalJS(jenv, h, EEq(EVar("arr"), EUndefined), 1) == Ok(VBool(true));
+    assert StmtLiveAliasSafe(s, jenv, h, live, 1);
+    Theorem1_StmtSoundness(unwrapHint, s, fenv, jenv, h, live, 1);
+    assert ExecValStmt(unwrapHint, s, fenv) == Ok(fenv);
+    assert ExecJSStmt(s, jenv, h, 1) == Ok((jenv, h));
   }
 }

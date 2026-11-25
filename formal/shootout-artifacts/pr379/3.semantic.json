@@ -27,10 +27,36 @@
     }
   ],
   "oracle": "dafny-resolve",
-  "stage": "opt",
+  "stage": "both",
   "signature": "dafny-resolve (mutation/array-index-assign)",
-  "detail": "/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-fuzz-Dfsp8N/imp_opt_refute_0.dfy(9,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n  |\n9 |     arr := arr.value[0 := 10];\n  |         ^^\n\n/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-fuzz-Dfsp8N/imp_opt_refute_0.dfy(21,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n   |\n21 |     arr := arr.value[0 := 10];\n   |         ^^\n\n2 resolution/type errors detected in imp_opt_refute_0.dfy",
+  "detail": "/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-replay-BnTKD9/imp_pre_refute_0.dfy(9,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n  |\n9 |     arr := arr.value[0 := 10];\n  |         ^^\n\n/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-replay-BnTKD9/imp_pre_refute_0.dfy(21,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n   |\n21 |     arr := arr.value[0 := 10];\n   |         ^^\n\n2 resolution/type errors detected in imp_pre_refute_0.dfy",
   "checks": [
+    {
+      "inputIndex": 0,
+      "nodeOutcome": {
+        "kind": "value",
+        "value": 10
+      },
+      "dafnyArgs": [
+        "Option.Some([10, 2, 4])"
+      ],
+      "stage": "pre",
+      "status": "resolve-error",
+      "detail": "/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-replay-BnTKD9/imp_pre_refute_0.dfy(9,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n  |\n9 |     arr := arr.value[0 := 10];\n  |         ^^\n\n/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-replay-BnTKD9/imp_pre_refute_0.dfy(21,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n   |\n21 |     arr := arr.value[0 := 10];\n   |         ^^\n\n2 resolution/type errors detected in imp_pre_refute_0.dfy"
+    },
+    {
+      "inputIndex": 1,
+      "nodeOutcome": {
+        "kind": "value",
+        "value": -1
+      },
+      "dafnyArgs": [
+        "Option.None"
+      ],
+      "stage": "pre",
+      "status": "resolve-error",
+      "detail": "/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-replay-BnTKD9/imp_pre_refute_1.dfy(9,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n  |\n9 |     arr := arr.value[0 := 10];\n  |         ^^\n\n/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-replay-BnTKD9/imp_pre_refute_1.dfy(21,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n   |\n21 |     arr := arr.value[0 := 10];\n   |         ^^\n\n2 resolution/type errors detected in imp_pre_refute_1.dfy"
+    },
     {
       "inputIndex": 0,
       "nodeOutcome": {
@@ -42,7 +68,7 @@
       ],
       "stage": "opt",
       "status": "resolve-error",
-      "detail": "/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-fuzz-Dfsp8N/imp_opt_refute_0.dfy(9,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n  |\n9 |     arr := arr.value[0 := 10];\n  |         ^^\n\n/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-fuzz-Dfsp8N/imp_opt_refute_0.dfy(21,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n   |\n21 |     arr := arr.value[0 := 10];\n   |         ^^\n\n2 resolution/type errors detected in imp_opt_refute_0.dfy"
+      "detail": "/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-replay-BnTKD9/imp_opt_refute_0.dfy(9,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n  |\n9 |     arr := arr.value[0 := 10];\n  |         ^^\n\n/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-replay-BnTKD9/imp_opt_refute_0.dfy(21,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n   |\n21 |     arr := arr.value[0 := 10];\n   |         ^^\n\n2 resolution/type errors detected in imp_opt_refute_0.dfy"
     },
     {
       "inputIndex": 1,
@@ -55,7 +81,7 @@
       ],
       "stage": "opt",
       "status": "resolve-error",
-      "detail": "/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-fuzz-Dfsp8N/imp_opt_refute_1.dfy(9,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n  |\n9 |     arr := arr.value[0 := 10];\n  |         ^^\n\n/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-fuzz-Dfsp8N/imp_opt_refute_1.dfy(21,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n   |\n21 |     arr := arr.value[0 := 10];\n   |         ^^\n\n2 resolution/type errors detected in imp_opt_refute_1.dfy"
+      "detail": "/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-replay-BnTKD9/imp_opt_refute_1.dfy(9,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n  |\n9 |     arr := arr.value[0 := 10];\n  |         ^^\n\n/var/folders/gl/4km4s5hd14gdbr7ksbhd0fpr0000gn/T/lsc-imp-replay-BnTKD9/imp_opt_refute_1.dfy(21,8): Error: RHS (of type seq<int>) not assignable to LHS (of type Option<seq<int>>)\n   |\n21 |     arr := arr.value[0 := 10];\n   |         ^^\n\n2 resolution/type errors detected in imp_opt_refute_1.dfy"
     }
   ]
 }

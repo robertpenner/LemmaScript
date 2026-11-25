@@ -16,10 +16,23 @@
     }
   ],
   "oracle": "soundness-refuted",
-  "stage": "opt",
+  "stage": "both",
   "signature": "soundness-refuted (aliasing/live-alias-mutation)",
   "detail": "CRITICAL: Node returned 1 for target([]), yet Dafny proved result != 1.",
   "checks": [
+    {
+      "inputIndex": 0,
+      "nodeOutcome": {
+        "kind": "value",
+        "value": 1
+      },
+      "dafnyArgs": [
+        "[]"
+      ],
+      "stage": "pre",
+      "status": "soundness-refuted",
+      "detail": "Dafny program verifier finished with 1 verified, 0 errors"
+    },
     {
       "inputIndex": 0,
       "nodeOutcome": {

@@ -1,5 +1,20 @@
 # Baseline Narrowing and Mutation Fuzzer Shootout (`midspiral/main` vs. PR #379)
 
+This document compares two versions of LemmaScript on a shared set of 40 generated TypeScript programs where type narrowing interacts with imperative code (reassignment, in-place array/map/record mutation, loops, shadowing, discriminated unions, `null` vs. `undefined`, aliasing, and precondition-bearing calls). The goal is to measure which bugs the checked-reads prototype in PR #379 already fixes and which soundness or compilation gaps still need to be solved by the rewrite planned in midspiral/LemmaScript#387.
+
+For each generated program and concrete input, the harness runs the TypeScript in Node to observe JavaScript's actual behavior, compiles the same program to Dafny, and asks Dafny two soundness checks:
+
+- **False-proof check (`soundness-refuted`):** When JavaScript returns a value `v`, the harness asks Dafny to prove `result != v`. If Dafny verifies that claim, the translation silently contradicts JavaScript semantics.
+- **Dropped-precondition check (`precondition-dropped`):** Some programs call a helper `guard(false, v)` carrying `//@ requires ok` inside comparisons or boolean chains. When JavaScript executes that call, Dafny must reject it; if Dafny verifies with zero errors, the translation dropped an operand JavaScript still evaluates.
+
+Both branches ran the exact same 40-program seed (`--seed 1 --runs 40`). Three findings stand out before the detailed tables below:
+
+1. **PR #379 fixes two critical soundness bugs present on `midspiral/main`:** mutating a narrowed optional array (`if (arr !== undefined) arr.push(v)`, midspiral/LemmaScript#350) and skipping the right-hand side of `x === guard(false, v)` when `x` is `undefined` (midspiral/LemmaScript#349). It also fixes compilation errors on reassignment narrowing (midspiral/LemmaScript#340) and `while`-loop presence checks (midspiral/LemmaScript#339).
+2. **Two critical false-proof bugs remain on both branches:** mutating an array through an alias while the original variable is still read (`const b = a; b.push(v); return a.length`, where Dafny models arrays as independent values and proves the old length), and distinguishing `null` from `undefined` in `number | null | undefined` (midspiral/LemmaScript#304, where both encode as `Option.None`).
+3. **PR #379 has a new write-back bug on optional array indexing:** writing `arr[0] = 10` inside `if (arr !== undefined && arr.length > 0)` emits `arr := arr.value[0 := 10]` without re-wrapping `Some(...)`, producing a Dafny type error.
+
+## Run metadata
+
 - **Tracking:** robertpenner/LemmaScript#47 (part of robertpenner/LemmaScript#43; Milestone 0 baseline scorecard for midspiral/LemmaScript#387).
 - **Branches evaluated:**
   - `midspiral/main` (`f991de5`, current `someMatch` pipeline)
@@ -50,9 +65,9 @@ All 7 families were enabled: `reassign`, `mutation`, `loop-shadow`, `union`, `nu
 | --- | --- | --- | --- | --- |
 | #4 | **CRITICAL** (`soundness-refuted`) | `aliasing/live-alias-mutation` | Related: midspiral/LemmaScript#267 (**still proves false postcondition on PR #379**) | [`pr379/4.ts`](./shootout-artifacts/pr379/4.ts), [`pr379/4.semantic.json`](./shootout-artifacts/pr379/4.semantic.json) |
 | #5 | **CRITICAL** (`soundness-refuted`) | `nullish-falsy/null-vs-undefined-eq` | Tracked: midspiral/LemmaScript#304 (**still proves false postcondition on PR #379**) | [`pr379/5.ts`](./shootout-artifacts/pr379/5.ts), [`pr379/5.semantic.json`](./shootout-artifacts/pr379/5.semantic.json) |
-| #3 | `dafny-resolve` | `mutation/array-index-assign` | **New PR #379 bug:** emits `arr := arr.value[0 := 10];` (`RHS of type seq<int> not assignable to LHS of type Option<seq<int>>` — missing `Some(...)` write-back wrapper) | [`pr379/3.ts`](./shootout-artifacts/pr379/3.ts), [`pr379/3.semantic.json`](./shootout-artifacts/pr379/3.semantic.json) |
-| #2 | `semantic-mismatch` | `loop-shadow/while-presence-countdown` | Expected unannotated loop behavior (no false proof; Dafny cannot prove concrete loop sum without loop invariants) | — |
-| #1 | `timeout` | `reassign/nested-field-reassign` | 15s cap exceeded once on PR #379 | — |
+| #3 | `dafny-resolve` | `mutation/array-index-assign` | **New PR #379 bug:** emits `arr := arr.value[0 := 10];` (`RHS of type seq<int> not assignable to LHS of type Option<seq<int>>`, missing `Some(...)` write-back wrapper) | [`pr379/3.ts`](./shootout-artifacts/pr379/3.ts), [`pr379/3.semantic.json`](./shootout-artifacts/pr379/3.semantic.json) |
+| #2 | `semantic-mismatch` | `loop-shadow/while-presence-countdown` | Expected unannotated loop behavior (no false proof; Dafny cannot prove concrete loop sum without loop invariants) | (none) |
+| #1 | `timeout` | `reassign/nested-field-reassign` | 15s cap exceeded once on PR #379 | (none) |
 
 ## 3. Deterministic Replay Verification
 

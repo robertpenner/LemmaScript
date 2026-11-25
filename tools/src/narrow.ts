@@ -45,12 +45,13 @@ import {
   isArrayFact, typeofStringFact, variantFact, negVariantFact,
   presentMatchStmts, presentMatchExpr,
 } from "./condition-facts.js";
+import { insertCheckedUnwraps } from "./checked-reads.js";
 
 // ── Walkers ──────────────────────────────────────────────────
 
 function walkExpr(e: TExpr, ctx: CondCtx): TExpr {
   const r = recurseExpr(e, ctx);
-  return ruleNullish(r, ctx) ?? ruleNullishIndex(r) ?? ruleOptChainIndex(r) ?? ruleOptChain(r, ctx) ?? ruleImplOptional(r, ctx) ?? ruleImplArrayIsArray(r, ctx) ?? ruleConditionalArrayIsArray(r, ctx) ?? ruleConditionalAndArrayIsArray(r, ctx) ?? ruleConditionalAndOptional(r, ctx) ?? ruleConditionalOptionalSimple(r, ctx) ?? ruleConditionalInMap(r, ctx) ?? ruleConditionalOptionalTruthy(r, ctx) ?? r;
+  return ruleNullishIndex(r) ?? ruleNullish(r, ctx) ?? ruleOptChainIndex(r) ?? ruleOptChain(r, ctx) ?? ruleImplOptional(r, ctx) ?? ruleImplArrayIsArray(r, ctx) ?? ruleConditionalArrayIsArray(r, ctx) ?? ruleConditionalAndArrayIsArray(r, ctx) ?? ruleConditionalAndOptional(r, ctx) ?? ruleConditionalOptionalSimple(r, ctx) ?? ruleConditionalInMap(r, ctx) ?? ruleConditionalOptionalTruthy(r, ctx) ?? r;
 }
 
 function recurseExpr(e: TExpr, ctx: CondCtx): TExpr {
@@ -77,6 +78,7 @@ function recurseExpr(e: TExpr, ctx: CondCtx): TExpr {
     case "forall": return { ...e, body: re(e.body) };
     case "exists": return { ...e, body: re(e.body) };
     case "someMatch": return { ...e, someBody: re(e.someBody), noneBody: re(e.noneBody) };
+    case "checkedUnwrap": return { ...e, expr: re(e.expr) };
     case "tagMatch": return { ...e, scrutinee: re(e.scrutinee),
       cases: e.cases.map(c => ({ ...c, body: re(c.body) })),
       fallthrough: e.fallthrough ? re(e.fallthrough) : null };
@@ -165,9 +167,37 @@ function isTerminating(stmts: TStmt[]): boolean {
 
 // ── Presence drivers ────────────────────────────────────────
 
+/** True if `stmts` contains a direct assignment to `varName` that could set it
+ *  to `undefined` or an arbitrary `Option<T>` (not a `Some(...)` wrapper),
+ *  meaning a `someMatch` binder would become stale (#342). */
+function stmtsMayClearVar(stmts: readonly TStmt[], varName: string): boolean {
+  for (const s of stmts) {
+    if (s.kind === "assign" && s.target === varName) {
+      const isSomeWrap = s.value.kind === "call" && s.value.fn.kind === "var" &&
+        s.value.fn.name === "Some" && s.value.args.length === 1;
+      if (!isSomeWrap && (s.value.ty.kind === "optional" || s.value.ty.kind === "void" ||
+          (s.value.kind === "var" && s.value.name === "undefined"))) {
+        return true;
+      }
+    } else if (s.kind === "if") {
+      if (stmtsMayClearVar(s.then, varName) || stmtsMayClearVar(s.else, varName)) return true;
+    } else if (s.kind === "while" || s.kind === "forof") {
+      if (stmtsMayClearVar(s.body, varName)) return true;
+    } else if (s.kind === "switch") {
+      if (s.cases.some(c => stmtsMayClearVar(c.body, varName)) || stmtsMayClearVar(s.defaultBody, varName)) return true;
+    } else if (s.kind === "someMatch") {
+      if (stmtsMayClearVar(s.someBody, varName) || stmtsMayClearVar(s.noneBody, varName)) return true;
+    } else if (s.kind === "tagMatch") {
+      if (s.cases.some(c => stmtsMayClearVar(c.body, varName)) || stmtsMayClearVar(s.fallthrough, varName)) return true;
+    }
+  }
+  return false;
+}
+
 /** Driver: `if (e !== undefined) then else` — presence fact in if position.
  *  → `someMatch e { Some(_e_val) => then, None => else }`. Requires a
- *  non-empty Some branch. */
+ *  non-empty Some branch, and defers to checked reads when `someBody` may
+ *  clear `e` to `undefined`/optional (#342). */
 function ruleIfOptionalSimple(s: TStmt, ctx: CondCtx): TStmt | null {
   if (s.kind !== "if") return null;
   const check = presentFact(s.cond);
@@ -175,6 +205,7 @@ function ruleIfOptionalSimple(s: TStmt, ctx: CondCtx): TStmt | null {
   const someBody = check.negated ? s.else : s.then;
   const noneBody = check.negated ? s.then : s.else;
   if (someBody.length === 0) return null;
+  if (check.scrutinee.kind === "var" && stmtsMayClearVar(someBody, check.scrutinee.name)) return null;
   return presentMatchStmts(check, someBody, noneBody, ctx);
 }
 
@@ -190,6 +221,7 @@ function ruleEarlyReturnConsume(s: TStmt, rest: TStmt[], ctx: CondCtx): TStmt | 
   const noneBranch = check.negated ? s.then : s.else;
   if (someBranch.length !== 0) return null;
   if (!isTerminating(noneBranch)) return null;
+  if (check.scrutinee.kind === "var" && stmtsMayClearVar(rest, check.scrutinee.name)) return null;
   return presentMatchStmts(check, rest, noneBranch, ctx);
 }
 
@@ -314,7 +346,12 @@ function ruleImplOptional(e: TExpr, ctx: CondCtx): TExpr | null {
  *  semantics (`??` tests null/undefined, not falsiness) — no falsy gate. */
 function ruleNullish(e: TExpr, ctx: CondCtx): TExpr | null {
   if (e.kind !== "nullish") return null;
-  if (e.left.ty.kind !== "optional") return null;
+  // Non-optional left operand (#352): `undefined ?? r` -> `r`; plain `x ?? r` -> `x`.
+  if (e.left.ty.kind !== "optional") {
+    if (e.left.kind === "var" && e.left.name === "undefined") return e.right;
+    if (e.left.ty.kind === "void") return e.right;
+    return e.left;
+  }
   const innerTy = e.left.ty.inner;
   const binder = freshOcBinder(ctx);
   return {
@@ -382,7 +419,13 @@ function ruleOptionalIndexBinding(s: TStmt): TStmt | null {
  *  so transform doesn't substitute. Scrutinee can be any expression. */
 function ruleOptChain(e: TExpr, ctx: CondCtx): TExpr | null {
   if (e.kind !== "optChain") return null;
-  if (e.obj.ty.kind !== "optional") return null;
+  // Non-optional receiver (#352): `undefined?.foo` -> `undefined`; plain `s?.length` -> `s.length`.
+  if (e.obj.ty.kind !== "optional") {
+    if ((e.obj.kind === "var" && e.obj.name === "undefined") || e.obj.ty.kind === "void") {
+      return { kind: "var", name: "undefined", ty: { kind: "void" } };
+    }
+    return applyChain(e.obj, e.chain);
+  }
   const innerTy = e.obj.ty.inner;
   const binder = freshOcBinder(ctx);
   const body = applyChain({ kind: "var", name: binder, ty: innerTy }, e.chain);
@@ -509,6 +552,7 @@ function containsMethodCall(e: TExpr): boolean {
       return false;
     case "binop": return containsMethodCall(e.left) || containsMethodCall(e.right);
     case "unop": return containsMethodCall(e.expr);
+    case "checkedUnwrap": return containsMethodCall(e.expr);
     case "call": return containsMethodCall(e.fn) || e.args.some(containsMethodCall);
     case "index": return containsMethodCall(e.obj) || containsMethodCall(e.idx);
     case "field": return containsMethodCall(e.obj);
@@ -728,7 +772,7 @@ function narrowFunction(fn: TFunction, ctx: CondCtx): TFunction {
 
 export function narrowModule(mod: TModule): TModule {
   const ctx: CondCtx = { decls: mod.typeDecls, oc: { n: 0 } };
-  return {
+  const narrowed: TModule = {
     ...mod,
     constants: mod.constants.map(c => ({ ...c, value: walkExpr(c.value, ctx) })),
     functions: mod.functions.map(fn => narrowFunction(fn, ctx)),
@@ -737,4 +781,5 @@ export function narrowModule(mod: TModule): TModule {
       methods: cls.methods.map(m => narrowFunction(m, ctx)),
     })),
   };
+  return insertCheckedUnwraps(narrowed);
 }

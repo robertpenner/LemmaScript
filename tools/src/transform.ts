@@ -52,6 +52,7 @@ function mapExpr(e: Expr, f: (e: Expr) => Expr | null): Expr {
     case "toNat": return { ...e, expr: r(e.expr) };
     case "toInt": return { ...e, expr: r(e.expr) };
     case "toReal": return { ...e, expr: r(e.expr) };
+    case "checkedUnwrap": return { ...e, expr: r(e.expr) };
     case "index": return { ...e, arr: r(e.arr), idx: r(e.idx) };
     case "stringIndex": return { ...e, str: r(e.str), idx: r(e.idx) };
     case "tupleLiteral": return { ...e, elems: e.elems.map(r) };
@@ -118,6 +119,7 @@ function mapTExpr(e: TExpr, f: (e: TExpr) => TExpr | null): TExpr {
         : s) };
     case "nullish": return { ...e, left: r(e.left), right: r(e.right) };
     case "someMatch": return { ...e, scrutinee: r(e.scrutinee), someBody: r(e.someBody), noneBody: r(e.noneBody) };
+    case "checkedUnwrap": return { ...e, expr: r(e.expr) };
     case "tagMatch": return { ...e, scrutinee: r(e.scrutinee),
       cases: e.cases.map(c => ({ ...c, body: r(c.body) })),
       fallthrough: e.fallthrough ? r(e.fallthrough) : null };
@@ -597,12 +599,34 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
         const valExpr: Expr = valSide.kind === "str" && innerTy.kind === "user"
           ? { kind: "constructor", name: valSide.value, type: innerTy.name, args: [] }
           : lowerExpr(valSide, binds);
-        // The bound value goes on the left, so mirror the operator when the
-        // optional was on the right: `x < opt` → `Some(v) => v > x`.
+        // Precondition preservation (#349): JavaScript evaluates BOTH operands of
+        // `===`, `!==`, `<`, `<=`, `>`, `>=` unconditionally. When `valSide` can
+        // carry preconditions (calls, indexing, checked reads, div/mod), bind
+        // `valExpr` in a `let` BEFORE matching `optExpr` so:
+        //   1. Every precondition in `valSide` is checked even when `optExpr` is `None`.
+        //   2. Comparing `bound op _cmp` unwrapped inside `Some` preserves Z3's
+        //      sequence/map extensionality triggers (unlike `opt == Some(val)`).
+        // Pure comparisons (e.g. `res.truncatedBy === "bytes"` in pi-lemmascript)
+        // skip the `let` binding completely (zero temporary churn).
         const op = e.left.ty.kind === "optional" ? e.op : MIRROR_OP[e.op] ?? e.op;
         const cmpOp = BOOL_OP_MAP[op] ?? op;
         const noneVal = e.op === "!==" ? true : false;
         const bound = matchBinder("value");
+        if (hasPreconditionExpr(valSide)) {
+          const tmp = freshName("_cmp");
+          return {
+            kind: "let",
+            name: tmp,
+            value: valExpr,
+            body: {
+              kind: "match", scrutinee: optExpr,
+              arms: [
+                { pattern: pCtor("some", bound), body: { kind: "binop", op: cmpOp, left: { kind: "var", name: bound }, right: { kind: "var", name: tmp } } },
+                { pattern: pCtor("none"), body: { kind: "bool", value: noneVal } },
+              ],
+            },
+          };
+        }
         return {
           kind: "match", scrutinee: optExpr,
           arms: [
@@ -1221,6 +1245,9 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
       }
       return { kind: "havoc", type: e.ty };
 
+    case "checkedUnwrap":
+      return { kind: "checkedUnwrap", expr: lowerExpr(e.expr, binds) };
+
     case "someMatch": {
       let someBody: Expr;
       let scrutinee: Expr | string;
@@ -1778,6 +1805,51 @@ function lookupFieldTy(rootTy: Ty | undefined, fields: string[], typeDecls: Type
   return cur ?? null;
 }
 
+/** True if `e` contains any subexpression that can carry a backend precondition
+ *  (calls, indexing, checked unwraps, division/modulo). Used to ensure optional
+ *  comparisons evaluate `valSide` unconditionally instead of skipping it in a
+ *  `None` match arm (#349), while leaving pure literal/variable comparisons
+ *  untouched (zero churn on `pi-lemmascript` and existing `examples/`). */
+const TOTAL_PURE_BUILTINS = new Set([
+  "set.has", "map.has", "array.includes", "string.includes",
+  "string.startsWith", "string.endsWith", "string.indexOf", "string.lastIndexOf",
+  "string.trim", "string.toLowerCase", "string.toUpperCase",
+]);
+
+function hasPreconditionExpr(e: TExpr): boolean {
+  switch (e.kind) {
+    case "call":
+      if (e.builtinId && TOTAL_PURE_BUILTINS.has(e.builtinId)) {
+        return hasPreconditionExpr(e.fn) || e.args.some(hasPreconditionExpr);
+      }
+      return true;
+    case "index":
+      return true;
+    case "checkedUnwrap":
+      return true;
+    case "binop":
+      return e.op === "/" || e.op === "%" || hasPreconditionExpr(e.left) || hasPreconditionExpr(e.right);
+    case "unop":
+      return hasPreconditionExpr(e.expr);
+    case "field":
+      return hasPreconditionExpr(e.obj);
+    case "record":
+      return (e.spread !== null && hasPreconditionExpr(e.spread)) || e.fields.some(f => hasPreconditionExpr(f.value));
+    case "arrayLiteral":
+      return e.elems.some(hasPreconditionExpr);
+    case "conditional":
+      return hasPreconditionExpr(e.cond) || hasPreconditionExpr(e.then) || hasPreconditionExpr(e.else);
+    case "nullish":
+      return hasPreconditionExpr(e.left) || hasPreconditionExpr(e.right);
+    case "someMatch":
+      return hasPreconditionExpr(e.scrutinee) || hasPreconditionExpr(e.someBody) || hasPreconditionExpr(e.noneBody);
+    case "tagMatch":
+      return hasPreconditionExpr(e.scrutinee) || e.cases.some(c => hasPreconditionExpr(c.body)) || (e.fallthrough !== null && hasPreconditionExpr(e.fallthrough));
+    default:
+      return false;
+  }
+}
+
 function liftMethodCalls(e: TExpr): { binds: Stmt[]; expr: Expr } {
   const binds: Stmt[] = [];
   return { binds, expr: lowerExpr(e, binds) };
@@ -1950,19 +2022,31 @@ function transformStmt(s: TStmt, typeDecls: TypeDeclInfo[]): Stmt[] {
         }
       }
       // Assignment to a narrowed optional variable (e.g., `arr[0] = v` desugared to
-      // `arr = arr.with(0, v)` or `arr = [1, 2]`): update the match binder and
-      // write back `arr := Option.Some(binder)` so storage and binder stay in sync.
+      // `arr = arr.with(0, v)` or `a = 10` coerced to `Some(10)` by resolve):
+      // update the match binder and write back `arr := Option.Some(binder)` so
+      // storage and binder stay in sync (#342).
       const activeUnwrap = !s.target.includes(".")
         ? findActiveUnwrapFrame(s.target, [], _writeBackFrames)
         : null;
-      if (activeUnwrap && s.value.ty.kind !== "optional" &&
-          !(s.value.kind === "var" && s.value.name === "undefined")) {
-        const { binds, expr } = liftMethodCalls(s.value);
-        return [
-          ...binds,
-          { kind: "assign", target: activeUnwrap.binder, value: expr },
-          ...emitWriteBacksForTarget(activeUnwrap.binder, _writeBackFrames),
-        ];
+      if (activeUnwrap) {
+        if (s.value.kind === "call" && s.value.fn.kind === "var" &&
+            s.value.fn.name === "Some" && s.value.args.length === 1) {
+          const { binds, expr } = liftMethodCalls(s.value.args[0]!);
+          return [
+            ...binds,
+            { kind: "assign", target: activeUnwrap.binder, value: expr },
+            ...emitWriteBacksForTarget(activeUnwrap.binder, _writeBackFrames),
+          ];
+        }
+        if (s.value.ty.kind !== "optional" &&
+            !(s.value.kind === "var" && s.value.name === "undefined")) {
+          const { binds, expr } = liftMethodCalls(s.value);
+          return [
+            ...binds,
+            { kind: "assign", target: activeUnwrap.binder, value: expr },
+            ...emitWriteBacksForTarget(activeUnwrap.binder, _writeBackFrames),
+          ];
+        }
       }
       // Top-level method call → direct monadic bind, no lifting needed
       if (s.value.kind === "call" && s.value.callKind === "method")

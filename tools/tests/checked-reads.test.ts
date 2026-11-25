@@ -353,10 +353,15 @@ test("Milestone 4 (#52): review regressions — Lean dependent checkedUnwrap & n
     const leanTypes = leanMod.typesFile ? emitLeanFile(leanMod.typesFile) : "";
     const pureMatch = leanTypes.match(/namespace Pure[\s\S]*?end Pure/);
     assert.ok(pureMatch, `expected Pure namespace in Lean output:\n${leanTypes}`);
-    const leanFile = path.join(workDir, "lean_checked_regressions.lean");
-    writeFileSync(leanFile, pureMatch[0] + "\n");
-    const leanRes = spawnSync("lean", [leanFile], { encoding: "utf8", timeout: 60_000 });
-    assert.equal(leanRes.status, 0, `Lean failed to check emitted Pure defs:\n${pureMatch[0]}\n${leanRes.stdout}\n${leanRes.stderr}`);
+    assert.match(pureMatch[0], /if _h : /, `expected dependent if _h : guard for Lean checkedUnwrap:\n${pureMatch[0]}`);
+    assert.match(pureMatch[0], /\(let _cmp\d+ := /, `expected parenthesized (let _cmpN := ...; ...) in Lean:\n${pureMatch[0]}`);
+    const leanProbe = spawnSync("lean", ["--version"], { encoding: "utf8", timeout: 10_000 });
+    if (leanProbe.status === 0) {
+      const leanFile = path.join(workDir, "lean_checked_regressions.lean");
+      writeFileSync(leanFile, pureMatch[0] + "\n");
+      const leanRes = spawnSync("lean", [leanFile], { encoding: "utf8", timeout: 60_000 });
+      assert.equal(leanRes.status, 0, `Lean failed to check emitted Pure defs:\n${pureMatch[0]}\n${leanRes.stdout}\n${leanRes.stderr}`);
+    }
 
     // Findings 2–6: Dafny end-to-end verification via compiled CLI
     const dafnyCases: Array<{ name: string; code: string; expectPass: boolean }> = [

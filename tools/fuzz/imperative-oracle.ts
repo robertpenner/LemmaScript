@@ -33,6 +33,7 @@ import {
   type EvaluateHooks,
   type FailureStage,
 } from "./narrowing-fuzz.js";
+import { checkNarrowedModule, type NarrowViolation } from "../src/narrow-checks.js";
 
 export const IMPERATIVE_SCHEMA = "lemmascript-imperative-semantic-case/1";
 
@@ -52,6 +53,8 @@ export type ImperativeArg =
   | { kind: "int"; value: number }
   | { kind: "bool"; value: boolean }
   | { kind: "opt-int"; value: number | undefined }
+  | { kind: "opt-str"; value: string | undefined }
+  | { kind: "opt-bool"; value: boolean | undefined }
   | { kind: "nullish-int"; value: number | null | undefined }
   | { kind: "int-array"; value: number[] }
   | { kind: "opt-int-array"; value: number[] | undefined }
@@ -110,6 +113,7 @@ export interface ImperativeOutcome {
   preDfy?: string;
   optDfy?: string;
   optChanged?: boolean;
+  irViolations?: NarrowViolation[];
   checks: ImperativeCheckDetail[];
 }
 
@@ -177,6 +181,8 @@ export function imperativeArgToJs(arg: ImperativeArg): unknown {
     case "int": return arg.value;
     case "bool": return arg.value;
     case "opt-int": return arg.value;
+    case "opt-str": return arg.value;
+    case "opt-bool": return arg.value;
     case "nullish-int": return arg.value;
     case "int-array": return [...arg.value];
     case "opt-int-array": return arg.value === undefined ? undefined : [...arg.value];
@@ -201,6 +207,8 @@ export function imperativeArgToDafny(arg: ImperativeArg, dfySource: string): str
     case "int": return dafnyInt(arg.value);
     case "bool": return arg.value ? "true" : "false";
     case "opt-int": return dafnyOption(arg.value === undefined ? null : dafnyInt(arg.value));
+    case "opt-str": return dafnyOption(arg.value === undefined ? null : dafnyStr(arg.value));
+    case "opt-bool": return dafnyOption(arg.value === undefined ? null : (arg.value ? "true" : "false"));
     case "nullish-int": {
       if (dfySource.includes("datatype Nullish<")) {
         if (arg.value === undefined) return "Nullish.Undefined";
@@ -429,7 +437,10 @@ function runDafnyVerifyText(
     return { status: "tool-error", detail: res.error.message };
   }
   if (res.signal) {
-    return { status: "timeout", detail: `terminated by signal ${res.signal}` };
+    if (res.signal === "SIGTERM" || res.signal === "SIGKILL") {
+      return { status: "timeout", detail: `terminated by timeout signal ${res.signal}` };
+    }
+    return { status: "tool-error", detail: `dafny crashed with signal ${res.signal}${out ? `\n${out}` : ""}` };
   }
   if (out.includes("timed out")) {
     return { status: "timeout", detail: out };
@@ -464,7 +475,7 @@ export function evaluateImperativeProgram(
 ): ImperativeOutcome {
   env.counts.programs++;
   const timeoutSec = env.timeoutSec ?? 15;
-  const stages: DafnyStage[] = env.stages ?? ["opt"];
+  const stages: DafnyStage[] = env.stages ?? ["pre", "opt"];
 
   const tsErr = checkTypeScriptValid(program.tsText, env.project);
   if (tsErr) {
@@ -494,7 +505,8 @@ export function evaluateImperativeProgram(
     };
   }
 
-  const { preDfy, optDfy, optChanged } = compiledRes.compiled;
+  const { narrowed, userNames, preDfy, optDfy, optChanged } = compiledRes.compiled;
+  const irViolations = checkNarrowedModule(narrowed, userNames);
   const checks: ImperativeCheckDetail[] = [];
 
   let worstOracle: ImperativeOracleKind | null = null;
@@ -660,6 +672,7 @@ export function evaluateImperativeProgram(
       preDfy,
       optDfy,
       optChanged,
+      irViolations,
       checks,
     };
   }
@@ -684,6 +697,7 @@ export function evaluateImperativeProgram(
     preDfy,
     optDfy,
     optChanged,
+    irViolations,
     checks,
   };
 }
@@ -767,6 +781,33 @@ export interface BatchedScreenResult {
  * with a `Main()` driver and execute `dafny run --no-verify` once.
  * Returns any cases whose Dafny runtime output differs from Node's expected value.
  */
+/**
+ * Extract top-level datatype names and constructor names declared in emitted Dafny
+ * so `Main()` can qualify every constructor argument (including union variants like `a(...)`/`b(...)`).
+ */
+function extractDafnyDatatypeSymbols(dfy: string): string[] {
+  const syms = new Set<string>(["Option", "Nullish", "Box"]);
+  const dtRe = /^\s*datatype\s+(\w+)(?:<[^>]*>)?\s*=\s*(.+)$/gm;
+  let m: RegExpExecArray | null;
+  while ((m = dtRe.exec(dfy)) !== null) {
+    syms.add(m[1]);
+    for (const arm of m[2].split("|")) {
+      const cm = arm.trim().match(/^(\w+)/);
+      if (cm) syms.add(cm[1]);
+    }
+  }
+  return [...syms];
+}
+
+function qualifyDafnyArgForModule(arg: string, modName: string, symbols: string[]): string {
+  if (symbols.length === 0) return arg;
+  const escaped = symbols.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  // Single pass: preserve string literals; qualify bare datatype names (`Option.Some`, `Nullish.None`)
+  // and bare constructor calls (`a(5)`, `b([1])`, `Box(...)`) not already preceded by `.`.
+  const re = new RegExp(`"(?:[^"\\\\]|\\\\.)*"|(?<!\\.)\\b(${escaped})(?=\\s*(?:\\(|\\.))`, "g");
+  return arg.replace(re, (full, ident: string | undefined) => (ident ? `${modName}.${ident}` : full));
+}
+
 export function runBatchedDafnyFastScreen(
   entries: BatchedScreenEntry[],
   workDir: string,
@@ -789,9 +830,9 @@ export function runBatchedDafnyFastScreen(
       .map(line => `  ${line}`)
       .join("\n");
     moduleBlocks.push(`module ${modName} {\n${indented}\n}`);
-    // Qualify Option/Nullish/Box/union constructors inside Main with `Case_i.`
+    const dtSyms = extractDafnyDatatypeSymbols(e.dfy);
     const qualifiedArgs = e.dafnyArgs
-      .map(a => a.replace(/\b(Option|Nullish|Box)\b/g, `${modName}.$1`))
+      .map(a => qualifyDafnyArgForModule(a, modName, dtSyms))
       .join(", ");
     mainLines.push(`  var r_${i} := ${modName}.${e.fnName}(${qualifiedArgs});`);
     mainLines.push(`  print "CASE ${i} ", r_${i}, "\\n";`);
@@ -919,10 +960,9 @@ function genReassignProgram(): fc.Arbitrary<ImperativeProgram> {
         "export interface Box { items?: number[]; count?: number }",
         "export function target(b?: Box): number {",
         "  if (b !== undefined && b.count !== undefined) {",
-        `    const next = b.count + ${c1};`,
-        "    return next;",
+        `    b.count = b.count + ${c1};`,
         "  }",
-        `  return ${c2};`,
+        `  return b !== undefined && b.count !== undefined ? b.count : ${c2};`,
         "}",
       ].join("\n"),
       inputs: [
@@ -1041,9 +1081,8 @@ function genMutationProgram(): fc.Arbitrary<ImperativeProgram> {
           "export function target(b?: Box): number {",
           "  if (b !== undefined && b.items !== undefined) {",
           `    b.items.push(${v});`,
-          "    return b.items.length;",
           "  }",
-          "  return -1;",
+          "  return b !== undefined && b.items !== undefined ? b.items.length : -1;",
           "}",
         ].join("\n"),
         inputs: [
@@ -1169,8 +1208,9 @@ function genUnionProgram(): fc.Arbitrary<ImperativeProgram> {
         `      return u.v + ${v};`,
         '    case "b":',
         `      u.items.push(${v});`,
-        "      return u.items.length;",
+        "      break;",
         "  }",
+        '  return u.kind === "b" ? u.items.length : -1;',
         "}",
       ].join("\n"),
       inputs: [
@@ -1183,7 +1223,15 @@ function genUnionProgram(): fc.Arbitrary<ImperativeProgram> {
 
 function genNullishFalsyProgram(): fc.Arbitrary<ImperativeProgram> {
   return fc.record({
-    variant: fc.constantFrom("null-vs-undefined-eq", "null-then-undefined-branch", "falsy-zero-vs-undefined", "nullish-coalesce-zero"),
+    variant: fc.constantFrom(
+      "null-vs-undefined-eq",
+      "null-then-undefined-branch",
+      "falsy-zero-vs-undefined",
+      "falsy-empty-str-vs-undefined",
+      "falsy-false-vs-undefined",
+      "falsy-empty-arr-vs-undefined",
+      "nullish-coalesce-zero",
+    ),
     fallback: fc.integer({ min: 1, max: 10 }),
   }).map(({ variant, fallback }) => {
     if (variant === "null-vs-undefined-eq") {
@@ -1241,6 +1289,64 @@ function genNullishFalsyProgram(): fc.Arbitrary<ImperativeProgram> {
           { args: [{ kind: "opt-int", value: 0 }] },
           { args: [{ kind: "opt-int", value: undefined }] },
           { args: [{ kind: "opt-int", value: 3 }] },
+        ],
+      };
+    }
+    if (variant === "falsy-empty-str-vs-undefined") {
+      return {
+        family: "nullish-falsy",
+        label: variant,
+        fnName: "target",
+        returnKind: "number",
+        tsText: [
+          "export function target(s?: string): number {",
+          `  if (s) return s.length + ${fallback};`,
+          "  if (s === undefined) return -1;",
+          "  return 0;",
+          "}",
+        ].join("\n"),
+        inputs: [
+          { args: [{ kind: "opt-str", value: "" }] },
+          { args: [{ kind: "opt-str", value: undefined }] },
+          { args: [{ kind: "opt-str", value: "hi" }] },
+        ],
+      };
+    }
+    if (variant === "falsy-false-vs-undefined") {
+      return {
+        family: "nullish-falsy",
+        label: variant,
+        fnName: "target",
+        returnKind: "number",
+        tsText: [
+          "export function target(flag?: boolean): number {",
+          `  if (flag) return ${fallback};`,
+          "  if (flag === undefined) return -1;",
+          "  return 0;",
+          "}",
+        ].join("\n"),
+        inputs: [
+          { args: [{ kind: "opt-bool", value: false }] },
+          { args: [{ kind: "opt-bool", value: undefined }] },
+          { args: [{ kind: "opt-bool", value: true }] },
+        ],
+      };
+    }
+    if (variant === "falsy-empty-arr-vs-undefined") {
+      return {
+        family: "nullish-falsy",
+        label: variant,
+        fnName: "target",
+        returnKind: "number",
+        tsText: [
+          "export function target(arr?: number[]): number {",
+          `  if (arr) return arr.length + ${fallback};`,
+          "  return -1;",
+          "}",
+        ].join("\n"),
+        inputs: [
+          { args: [{ kind: "opt-int-array", value: [] }] },
+          { args: [{ kind: "opt-int-array", value: undefined }] },
         ],
       };
     }
@@ -1323,9 +1429,14 @@ function genGuardEvalProgram(): fc.Arbitrary<ImperativeProgram> {
   return fc.record({
     variant: fc.constantFrom(
       "eq-rhs-guard-false",
+      "neq-rhs-guard-false",
+      "le-rhs-guard-false",
       "lt-rhs-guard-false",
       "and-short-circuit-guard-false",
+      "or-short-circuit-guard-false",
+      "optchain-short-circuit-guard-false",
       "nullish-short-circuit-guard-false",
+      "call-arg-guard-false",
     ),
     v: smallIntArb,
   }).map(({ variant, v }) => {
@@ -1350,6 +1461,39 @@ function genGuardEvalProgram(): fc.Arbitrary<ImperativeProgram> {
         inputs: [{ args: [{ kind: "opt-int", value: undefined }] }],
       };
     }
+    if (variant === "neq-rhs-guard-false") {
+      return {
+        family: "guard-eval",
+        label: variant,
+        fnName: "target",
+        returnKind: "boolean",
+        tsText: [
+          guardDef,
+          "export function target(x?: number): boolean {",
+          `  return x !== guard(false, ${v});`,
+          "}",
+        ].join("\n"),
+        inputs: [{ args: [{ kind: "opt-int", value: undefined }] }],
+      };
+    }
+    if (variant === "le-rhs-guard-false") {
+      return {
+        family: "guard-eval",
+        label: variant,
+        fnName: "target",
+        returnKind: "boolean",
+        tsText: [
+          guardDef,
+          "export function target(x?: number): boolean {",
+          `  return x !== undefined && x <= guard(false, ${v});`,
+          "}",
+        ].join("\n"),
+        inputs: [
+          { args: [{ kind: "opt-int", value: undefined }] },
+          { args: [{ kind: "opt-int", value: v }] },
+        ],
+      };
+    }
     if (variant === "lt-rhs-guard-false") {
       return {
         family: "guard-eval",
@@ -1363,8 +1507,8 @@ function genGuardEvalProgram(): fc.Arbitrary<ImperativeProgram> {
           "}",
         ].join("\n"),
         inputs: [
-          { args: [{ kind: "opt-int", value: undefined }] }, // short-circuits!
-          { args: [{ kind: "opt-int", value: v - 1 }] },     // evaluates guard(false)!
+          { args: [{ kind: "opt-int", value: undefined }] },
+          { args: [{ kind: "opt-int", value: v - 1 }] },
         ],
       };
     }
@@ -1381,6 +1525,53 @@ function genGuardEvalProgram(): fc.Arbitrary<ImperativeProgram> {
           "}",
         ].join("\n"),
         inputs: [{ args: [{ kind: "bool", value: false }] }],
+      };
+    }
+    if (variant === "or-short-circuit-guard-false") {
+      return {
+        family: "guard-eval",
+        label: variant,
+        fnName: "target",
+        returnKind: "boolean",
+        tsText: [
+          guardDef,
+          "export function target(flag: boolean): boolean {",
+          `  return flag || guard(false, ${v}) > 0;`,
+          "}",
+        ].join("\n"),
+        inputs: [{ args: [{ kind: "bool", value: true }] }],
+      };
+    }
+    if (variant === "optchain-short-circuit-guard-false") {
+      return {
+        family: "guard-eval",
+        label: variant,
+        fnName: "target",
+        returnKind: "number",
+        tsText: [
+          guardDef,
+          "export function target(arr?: number[]): number {",
+          `  const hit = arr?.[guard(false, 0)];`,
+          `  return hit ?? ${v};`,
+          "}",
+        ].join("\n"),
+        inputs: [{ args: [{ kind: "opt-int-array", value: undefined }] }],
+      };
+    }
+    if (variant === "call-arg-guard-false") {
+      return {
+        family: "guard-eval",
+        label: variant,
+        fnName: "target",
+        returnKind: "number",
+        tsText: [
+          guardDef,
+          "export function id(n: number): number { return n; }",
+          "export function target(x?: number): number {",
+          `  return id(guard(false, ${v})) + (x ?? 0);`,
+          "}",
+        ].join("\n"),
+        inputs: [{ args: [{ kind: "opt-int", value: undefined }] }],
       };
     }
     return {
@@ -1434,13 +1625,17 @@ export interface ImperativeCampaignSummary {
   runs: number;
   families: readonly ImperativeFamily[];
   counts: ImperativeCounts;
+  fastRunScreened?: number;
+  fastRunDivergences?: number;
   classes: Array<{
     classIndex: number;
     oracle: ImperativeOracleKind;
+    stage: FailureStage | null;
     family: ImperativeFamily;
     label: string;
     signature: string;
     detail: string;
+    irViolationCount: number;
     tsFile: string;
     caseFile: string;
   }>;
@@ -1458,38 +1653,162 @@ export function runImperativeCampaign(opts: ImperativeCampaignOptions): Imperati
   const counts = createImperativeCounts();
   const seen = new Set<string>();
   const classes: ImperativeCampaignSummary["classes"] = [];
+  const stages: DafnyStage[] = opts.stages ?? ["pre", "opt"];
+  let fastRunScreened = 0;
+  let fastRunDivergences = 0;
 
   try {
-    const programs = fc.sample(imperativeProgramArb(opts.families), {
-      seed: opts.seed,
-      numRuns: opts.runs,
-    });
-
-    for (const prog of programs) {
-      const outcome = evaluateImperativeProgram(prog, {
-        project,
-        workDir,
-        counts,
-        timeoutSec: opts.timeoutSec,
-        stages: opts.stages ?? ["opt"],
+    if (opts.fastRun) {
+      // Fast-run mode: sample candidate programs, compile them, run batched `dafny run --no-verify`
+      // on all value-returning inputs in one invocation, then confirm flagged divergences and
+      // precondition-violating inputs with `dafny verify`.
+      const samples = fc.sample(imperativeProgramArb(opts.families), {
+        seed: opts.seed,
+        numRuns: opts.runs,
       });
-      if (!outcome.ok && outcome.oracle && !seen.has(outcome.signature)) {
-        seen.add(outcome.signature);
+      const batchEntries: BatchedScreenEntry[] = [];
+      const progByEntry = new Map<string, ImperativeProgram>();
+      const verifyQueue: ImperativeProgram[] = [];
+
+      for (let pi = 0; pi < samples.length; pi++) {
+        const prog = samples[pi];
+        const compiled = compileDafnyVariants(prog.tsText, project);
+        if (!compiled.ok) {
+          verifyQueue.push(prog);
+          continue;
+        }
+        let hasPrecond = false;
+        for (let ii = 0; ii < prog.inputs.length; ii++) {
+          const nodeRes = executeImperativeInNode(prog.tsText, prog.fnName, prog.inputs[ii], prog.returnKind);
+          if (nodeRes.kind === "precondition-violated") {
+            hasPrecond = true;
+          } else if (nodeRes.kind === "value") {
+            const id = `p${pi}_i${ii}`;
+            batchEntries.push({
+              id,
+              dfy: compiled.compiled.optDfy,
+              fnName: prog.fnName,
+              dafnyArgs: prog.inputs[ii].args.map(a => imperativeArgToDafny(a, compiled.compiled.optDfy)),
+              expectedJs: nodeRes.value,
+            });
+            progByEntry.set(id, prog);
+          }
+        }
+        if (hasPrecond) verifyQueue.push(prog);
+      }
+
+      if (batchEntries.length > 0) {
+        fastRunScreened = batchEntries.length;
+        const screen = runBatchedDafnyFastScreen(batchEntries, workDir, Math.max(30, opts.timeoutSec * 2));
+        if (screen.error) {
+          // Batch contained a program that failed Dafny resolution; fall back to per-program verify.
+          for (const prog of samples) {
+            if (!verifyQueue.includes(prog)) verifyQueue.push(prog);
+          }
+        } else {
+          fastRunDivergences = screen.divergences.length;
+          for (const div of screen.divergences) {
+            const prog = progByEntry.get(div.id);
+            if (prog && !verifyQueue.includes(prog)) verifyQueue.push(prog);
+          }
+        }
+      }
+
+      for (const prog of verifyQueue) {
+        const outcome = evaluateImperativeProgram(prog, {
+          project,
+          workDir,
+          counts,
+          timeoutSec: opts.timeoutSec,
+          stages,
+        });
+        if (!outcome.ok && outcome.oracle && !seen.has(outcome.signature)) {
+          seen.add(outcome.signature);
+          const idx = classes.length + 1;
+          const tsFile = path.join(opts.out, `${idx}.ts`);
+          const caseFile = path.join(opts.out, `${idx}.semantic.json`);
+          writeFileSync(tsFile, prog.tsText + "\n");
+          saveImperativeCase(caseFile, prog, outcome);
+          classes.push({
+            classIndex: idx,
+            oracle: outcome.oracle,
+            stage: outcome.stage ?? null,
+            family: prog.family,
+            label: prog.label,
+            signature: outcome.signature,
+            detail: outcome.detail,
+            irViolationCount: outcome.irViolations?.length ?? 0,
+            tsFile,
+            caseFile,
+          });
+        }
+      }
+    } else {
+      // Standard verification campaign with stage-locked `fc.check` shrinking per distinct failure class.
+      const maxRounds = Math.max(1, Math.min(20, opts.runs));
+      let remaining = opts.runs;
+      for (let round = 0; round < maxRounds && remaining > 0; round++) {
+        let lockedSig: string | null = null;
+        let shrunkProg: ImperativeProgram | null = null;
+        let shrunkOutcome: ImperativeOutcome | null = null;
+        let evalsInRound = 0;
+
+        const prop = fc.property(imperativeProgramArb(opts.families), (prog) => {
+          evalsInRound++;
+          const outcome = evaluateImperativeProgram(prog, {
+            project,
+            workDir,
+            counts,
+            timeoutSec: opts.timeoutSec,
+            stages,
+          });
+          if (outcome.ok || !outcome.oracle) return true;
+          if (seen.has(outcome.signature)) return true;
+          if (lockedSig === null) {
+            lockedSig = outcome.signature;
+            shrunkProg = prog;
+            shrunkOutcome = outcome;
+            return false;
+          }
+          if (outcome.signature === lockedSig) {
+            shrunkProg = prog;
+            shrunkOutcome = outcome;
+            return false;
+          }
+          return true;
+        });
+
+        const checkRes = fc.check(prop, {
+          seed: opts.seed + round,
+          numRuns: remaining,
+          maxSkipsPerRun: 0,
+        });
+        remaining -= Math.min(remaining, Math.max(1, checkRes.numRuns));
+
+        if (!checkRes.failed || !lockedSig || !shrunkProg || !shrunkOutcome) {
+          break;
+        }
+        const finalProg: ImperativeProgram = shrunkProg;
+        const finalOutcome: ImperativeOutcome = shrunkOutcome;
+        seen.add(lockedSig);
         const idx = classes.length + 1;
         const tsFile = path.join(opts.out, `${idx}.ts`);
         const caseFile = path.join(opts.out, `${idx}.semantic.json`);
-        writeFileSync(tsFile, prog.tsText + "\n");
-        saveImperativeCase(caseFile, prog, outcome);
+        writeFileSync(tsFile, finalProg.tsText + "\n");
+        saveImperativeCase(caseFile, finalProg, finalOutcome);
         classes.push({
           classIndex: idx,
-          oracle: outcome.oracle,
-          family: prog.family,
-          label: prog.label,
-          signature: outcome.signature,
-          detail: outcome.detail,
+          oracle: finalOutcome.oracle!,
+          stage: finalOutcome.stage ?? null,
+          family: finalProg.family,
+          label: finalProg.label,
+          signature: finalOutcome.signature,
+          detail: finalOutcome.detail,
+          irViolationCount: finalOutcome.irViolations?.length ?? 0,
           tsFile,
           caseFile,
         });
+        if (evalsInRound === 0) break;
       }
     }
   } finally {
@@ -1501,6 +1820,7 @@ export function runImperativeCampaign(opts: ImperativeCampaignOptions): Imperati
     runs: opts.runs,
     families: opts.families,
     counts,
+    ...(opts.fastRun ? { fastRunScreened, fastRunDivergences } : {}),
     classes,
     elapsedSeconds: Number(((Date.now() - started) / 1000).toFixed(1)),
   };

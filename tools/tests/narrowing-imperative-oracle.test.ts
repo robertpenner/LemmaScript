@@ -16,6 +16,7 @@ import {
   imperativeProgramArb,
   replaySavedImperativeCase,
   runBatchedDafnyFastScreen,
+  runImperativeCampaign,
   saveImperativeCase,
   type ImperativeProgram,
 } from "../fuzz/imperative-oracle.ts";
@@ -241,17 +242,29 @@ test("batched dafny run fast screening detects runtime divergence alongside matc
       "  return a.length;",
       "}",
     ].join("\n");
+    const unionTs = [
+      'export type Item = { kind: "a"; v: number } | { kind: "b"; items: number[] };',
+      "export function target(u: Item): number {",
+      '  if (u.kind === "a") return u.v + 2;',
+      "  return u.items.length;",
+      "}",
+    ].join("\n");
 
     const goodCompiled = compileDafnyVariants(goodTs, project);
     const badCompiled = compileDafnyVariants(liveAliasTs, project);
+    const unionCompiled = compileDafnyVariants(unionTs, project);
     assert.equal(goodCompiled.ok, true);
     assert.equal(badCompiled.ok, true);
+    assert.equal(unionCompiled.ok, true);
 
     const arg = { kind: "int-array" as const, value: [1, 2] };
+    const unionArg = { kind: "union-ab" as const, value: { kind: "a" as const, v: 5 } };
     const goodNode = executeImperativeInNode(goodTs, "target", { args: [arg] }, "number");
     const badNode = executeImperativeInNode(liveAliasTs, "target", { args: [arg] }, "number");
+    const unionNode = executeImperativeInNode(unionTs, "target", { args: [unionArg] }, "number");
     assert.equal(goodNode.kind, "value");
     assert.equal(badNode.kind, "value");
+    assert.equal(unionNode.kind, "value");
 
     const screen = runBatchedDafnyFastScreen(
       [
@@ -261,6 +274,13 @@ test("batched dafny run fast screening detects runtime divergence alongside matc
           fnName: "target",
           dafnyArgs: [imperativeArgToDafny(arg, goodCompiled.compiled.optDfy)],
           expectedJs: goodNode.value,
+        },
+        {
+          id: "union-if-read",
+          dfy: unionCompiled.compiled.optDfy,
+          fnName: "target",
+          dafnyArgs: [imperativeArgToDafny(unionArg, unionCompiled.compiled.optDfy)],
+          expectedJs: unionNode.value,
         },
         {
           id: "live-alias-mutation",
@@ -275,12 +295,46 @@ test("batched dafny run fast screening detects runtime divergence alongside matc
     );
     assert.equal(screen.error, undefined, screen.error);
     assert.equal(screen.ok, false);
-    assert.equal(screen.matched, 1);
+    assert.equal(screen.matched, 2);
     assert.equal(screen.divergences.length, 1);
     assert.equal(screen.divergences[0].id, "live-alias-mutation");
     assert.equal(screen.divergences[0].expected, "3");
     assert.equal(screen.divergences[0].actual, "2");
   } finally {
     rmSync(workDir, { recursive: true, force: true });
+  }
+});
+
+test("imperative campaign exercises --fast-run screening and stage-locked shrinking with pre/opt attribution (#46)", () => {
+  const outFast = mkdtempSync(path.join(tmpdir(), "lsc-imp-fastrun-"));
+  const outShrink = mkdtempSync(path.join(tmpdir(), "lsc-imp-shrink-"));
+  try {
+    // 1. fastRun mode screens aliasing batch via `dafny run` and confirms divergence via `dafny verify`.
+    const fastSummary = runImperativeCampaign({
+      seed: 1,
+      runs: 12,
+      families: ["aliasing"],
+      out: outFast,
+      timeoutSec: 15,
+      fastRun: true,
+    });
+    assert.ok((fastSummary.fastRunScreened ?? 0) >= 1, "expected fastRunScreened >= 1");
+    assert.ok((fastSummary.fastRunDivergences ?? 0) >= 1, "expected live-alias divergence detected by fastRun");
+    assert.ok(fastSummary.classes.some(c => c.oracle === "soundness-refuted" && c.stage === "both"));
+
+    // 2. Standard campaign shrinks live-alias-mutation via fc.check with pre/opt stage attribution.
+    const shrinkSummary = runImperativeCampaign({
+      seed: 1,
+      runs: 12,
+      families: ["aliasing"],
+      out: outShrink,
+      timeoutSec: 15,
+    });
+    const cls = shrinkSummary.classes.find(c => c.oracle === "soundness-refuted");
+    assert.ok(cls, "expected shrunk soundness-refuted class");
+    assert.equal(cls.stage, "both");
+  } finally {
+    rmSync(outFast, { recursive: true, force: true });
+    rmSync(outShrink, { recursive: true, force: true });
   }
 });

@@ -15,10 +15,23 @@
     }
   ],
   "oracle": "precondition-dropped",
-  "stage": "opt",
+  "stage": "both",
   "signature": "precondition-dropped (guard-eval/eq-rhs-guard-false)",
   "detail": "Node violated guard(false) on input #0 (Option.None), but Dafny verified with 0 errors.",
   "checks": [
+    {
+      "inputIndex": 0,
+      "nodeOutcome": {
+        "kind": "precondition-violated",
+        "detail": "__LS_PRECONDITION_VIOLATED__"
+      },
+      "dafnyArgs": [
+        "Option.None"
+      ],
+      "stage": "pre",
+      "status": "precondition-dropped",
+      "detail": "Dafny program verifier finished with 1 verified, 0 errors"
+    },
     {
       "inputIndex": 0,
       "nodeOutcome": {

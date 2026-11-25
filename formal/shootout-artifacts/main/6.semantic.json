@@ -27,10 +27,36 @@
     }
   ],
   "oracle": "soundness-refuted",
-  "stage": "opt",
+  "stage": "both",
   "signature": "soundness-refuted (mutation/opt-array-push)",
   "detail": "CRITICAL: Node returned 4 for target(Option.Some([(-1), (-4), 6])), yet Dafny proved result != 4.",
   "checks": [
+    {
+      "inputIndex": 0,
+      "nodeOutcome": {
+        "kind": "value",
+        "value": 4
+      },
+      "dafnyArgs": [
+        "Option.Some([(-1), (-4), 6])"
+      ],
+      "stage": "pre",
+      "status": "soundness-refuted",
+      "detail": "Dafny program verifier finished with 1 verified, 0 errors"
+    },
+    {
+      "inputIndex": 1,
+      "nodeOutcome": {
+        "kind": "value",
+        "value": 0
+      },
+      "dafnyArgs": [
+        "Option.None"
+      ],
+      "stage": "pre",
+      "status": "ok",
+      "detail": "verified"
+    },
     {
       "inputIndex": 0,
       "nodeOutcome": {

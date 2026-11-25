@@ -659,6 +659,13 @@ import {
   replaySemanticSeedPath,
   runSemanticCampaign,
 } from "./semantic-oracle.js";
+import {
+  IMPERATIVE_FAMILIES,
+  IMPERATIVE_SCHEMA,
+  replaySavedImperativeCase,
+  runImperativeCampaign,
+  type ImperativeFamily,
+} from "./imperative-oracle.js";
 
 // ── Driver ──────────────────────────────────────────────────
 
@@ -669,11 +676,14 @@ function main(): number {
       runs: { type: "string" },
       classes: { type: "string", default: "12" },
       positions: { type: "string", default: POSITIONS.join(",") },
+      families: { type: "string", default: IMPERATIVE_FAMILIES.join(",") },
       minutes: { type: "string" },
       out: { type: "string" },
       path: { type: "string" },
       file: { type: "string" },
       semantic: { type: "boolean", default: false },
+      imperative: { type: "boolean", default: false },
+      "fast-run": { type: "boolean", default: false },
       "inputs-per-fn": { type: "string", default: "3" },
       "verify-timeout": { type: "string", default: "15" },
       case: { type: "string" },
@@ -687,6 +697,16 @@ function main(): number {
   }
 
   if (args.case) {
+    const raw = JSON.parse(readFileSync(args.case, "utf8")) as { schema?: string };
+    if (raw.schema === IMPERATIVE_SCHEMA) {
+      const outcome = replaySavedImperativeCase(args.case, { timeoutSec: Number(args["verify-timeout"]) });
+      if (outcome.ok) {
+        console.log(`saved imperative semantic replay passed (${outcome.checks.length} checks verified)`);
+        return 0;
+      }
+      console.log(`${outcome.signature}\n${outcome.detail}`);
+      return 1;
+    }
     const outcome = replaySavedSemanticCase(args.case);
     if (outcome.ok) {
       console.log(`saved semantic replay passed (${outcome.checks.length} checks verified on both pre and opt)`);
@@ -694,6 +714,31 @@ function main(): number {
     }
     console.log(`${outcome.signature}\n${outcome.detail}`);
     return 1;
+  }
+
+  if (args.imperative) {
+    const seed = Number(args.seed);
+    const numRuns = Number(args.runs ?? "30");
+    const timeoutSec = Number(args["verify-timeout"]);
+    const families = args.families.split(",").map(s => s.trim()) as ImperativeFamily[];
+    const badFam = families.filter(f => !IMPERATIVE_FAMILIES.includes(f));
+    if (badFam.length > 0) {
+      console.error(`unknown families: ${badFam.join(", ")}; choose from ${IMPERATIVE_FAMILIES.join(", ")}`);
+      return 2;
+    }
+    const out = args.out ?? path.join(tmpdir(), `lsc-narrowing-imperative-seed${seed}`);
+    const summary = runImperativeCampaign({
+      seed,
+      runs: numRuns,
+      families,
+      out,
+      timeoutSec,
+      fastRun: args["fast-run"],
+    });
+    console.log(JSON.stringify(summary, null, 2));
+    const critical = summary.counts.soundnessRefuted + summary.counts.preconditionDropped;
+    const otherFailures = summary.counts.semanticMismatch + summary.counts.dafnyResolve + summary.counts.invalidTs + summary.counts.timeout + summary.counts.toolError;
+    return critical > 0 || otherFailures > 0 ? 1 : 0;
   }
 
   if (args.file) {

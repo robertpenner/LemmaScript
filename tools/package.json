@@ -8,6 +8,7 @@
   },
   "scripts": {
     "extract": "tsx src/extract.ts",
+    "fuzz:imperative": "tsx fuzz/narrowing-fuzz.ts --imperative",
     "fuzz:narrowing": "tsx fuzz/narrowing-fuzz.ts",
     "fuzz:semantic": "tsx fuzz/narrowing-fuzz.ts --semantic",
     "typecheck": "tsc --noEmit"

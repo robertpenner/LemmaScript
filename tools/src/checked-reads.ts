@@ -27,6 +27,7 @@ interface Scope {
 
 function pathKey(e: TExpr): string | null {
   if (e.kind === "var") return e.name;
+  if (e.kind === "checkedUnwrap") return pathKey(e.expr);
   if (e.kind === "field") {
     const inner = pathKey(e.obj);
     return inner === null ? null : `${inner}.${e.field}`;
@@ -101,6 +102,29 @@ function isDefinitelyUnwrappedStamp(ty: Ty): boolean {
   return !isOptional(ty) && ty.kind !== "unknown" && ty.kind !== "void";
 }
 
+/** Rewrite an expression that is the direct operand of `=== undefined` /
+ *  `!== undefined`: never wrap the operand itself in `checkedUnwrap` (restore
+ *  its declared optional storage type so `transform.ts` emits an `Option`
+ *  presence check), while still rewriting any optional receiver prefix. */
+function rewritePresenceOperand(e: TExpr, scope: Scope, mod: TModule): TExpr {
+  const storage = storageTyOf(e, scope, mod);
+  if (e.kind === "var" && isOptional(storage)) {
+    return { ...e, ty: storage };
+  }
+  if (e.kind === "field") {
+    const obj = rewriteExpr(e.obj, scope, mod);
+    const updated: TExpr = obj === e.obj ? e : { ...e, obj };
+    const fStorage = storageTyOf(updated, scope, mod);
+    if (isOptional(fStorage)) return { ...updated, ty: fStorage };
+    return updated;
+  }
+  return rewriteExpr(e, scope, mod);
+}
+
+function isUndefinedVar(e: TExpr): boolean {
+  return e.kind === "var" && e.name === "undefined";
+}
+
 function rewriteExpr(e: TExpr, scope: Scope, mod: TModule): TExpr {
   switch (e.kind) {
     case "var": {
@@ -128,8 +152,15 @@ function rewriteExpr(e: TExpr, scope: Scope, mod: TModule): TExpr {
     case "index":
       return { ...e, obj: rewriteExpr(e.obj, scope, mod), idx: rewriteExpr(e.idx, scope, mod) };
     case "binop": {
-      const left = rewriteExpr(e.left, scope, mod);
-      const right = rewriteExpr(e.right, scope, mod);
+      let left: TExpr;
+      let right: TExpr;
+      if ((e.op === "===" || e.op === "!==") && (isUndefinedVar(e.left) || isUndefinedVar(e.right))) {
+        left = isUndefinedVar(e.right) ? rewritePresenceOperand(e.left, scope, mod) : rewriteExpr(e.left, scope, mod);
+        right = isUndefinedVar(e.left) ? rewritePresenceOperand(e.right, scope, mod) : rewriteExpr(e.right, scope, mod);
+      } else {
+        left = rewriteExpr(e.left, scope, mod);
+        right = rewriteExpr(e.right, scope, mod);
+      }
       let ty = e.ty;
       // Clear stale optional arithmetic stamp once operands are unwrapped.
       if (ARITH.has(e.op) && isOptional(ty) && !isOptional(left.ty) && !isOptional(right.ty)) {

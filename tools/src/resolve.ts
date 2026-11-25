@@ -70,7 +70,7 @@ function refine(env: Env | null, name: string, ty: Ty): Env {
   if (!entry) for (let e = env; e; e = e.parent) {
     if (e.emittedName === name) { entry = e; break; }
   }
-  return { ...entry, name: entry?.name ?? name, ty, parent: env };
+  return { ...entry, name: entry?.name ?? name, ty, storageTy: entry?.storageTy ?? entry?.ty ?? ty, parent: env };
 }
 // ── Access paths ─────────────────────────────────────────────
 
@@ -743,10 +743,13 @@ function resolveCallback(e: Extract<RawExpr, { kind: "lambda" }>, actual: Ty[], 
   // binding identities; nested declarations shadow them through ordinary lookup.
   let env = ctx.env;
   const frames = e.params.map((p, i): Env => {
+    const paramTy: Ty = executesDefault(i)
+      ? expandAlias(parseTsType(p.inferredTsType ?? p.tsType ?? "unknown"), ctx.typeDecls)
+      : p.rest ? { kind: "unknown" } : slots[i]?.ty ?? { kind: "void" };
     const frame: Env = {
       name: p.name, parent: env,
-      ty: executesDefault(i) ? expandAlias(parseTsType(p.inferredTsType ?? p.tsType ?? "unknown"), ctx.typeDecls)
-        : p.rest ? { kind: "unknown" } : slots[i]?.ty ?? { kind: "void" },
+      ty: paramTy,
+      storageTy: paramTy,
       onRead: () => {
         captures?.add(i);
         // A forward reference must never resolve to an outer variable if
@@ -1149,18 +1152,27 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
         rightCtx = collectAndChainNarrowings(left, ctx);
       } else if (e.op === "||") {
         // Preserve direct single-optional var comparisons (`opt === null || x < opt`,
-        // `excludeList === undefined || lid !== excludeList`) for transform's native
-        // mirrored match lowering; narrow all other RHS shapes (arithmetic, calls,
-        // nested paths, two-optional comparisons) via checked reads.
+        // `excludeTag === undefined || getTagId(t) !== excludeTag`) for transform's
+        // native mirrored match lowering, as long as the non-optional side doesn't
+        // also depend on a variable narrowed by `left`; narrow all other RHS shapes
+        // (arithmetic, calls using the narrowed var, nested paths, two-optional
+        // comparisons) via checked reads.
+        const orCtx = collectOrChainNarrowings(left, ctx);
+        const narrowedVars = new Set<string>();
+        for (let cur = orCtx.env; cur && cur !== ctx.env; cur = cur.parent) {
+          narrowedVars.add(cur.name);
+        }
+        const leftIsOptVar = rawRight.kind === "binop" && rawRight.left.kind === "var" &&
+          lookup(ctx.env, rawRight.left.name)?.kind === "optional";
+        const rightIsOptVar = rawRight.kind === "binop" && rawRight.right.kind === "var" &&
+          lookup(ctx.env, rawRight.right.name)?.kind === "optional";
         const isDirectSingleOptCmp =
           rawRight.kind === "binop" &&
           ["===", "!==", "<", "<=", ">", ">="].includes(rawRight.op) &&
-          (rawRight.left.kind === "var" || rawRight.left.kind === "num" || rawRight.left.kind === "str" || rawRight.left.kind === "bool") &&
-          (rawRight.right.kind === "var" || rawRight.right.kind === "num" || rawRight.right.kind === "str" || rawRight.right.kind === "bool") &&
-          ((rawRight.left.kind === "var" && lookup(ctx.env, rawRight.left.name)?.kind === "optional") !==
-           (rawRight.right.kind === "var" && lookup(ctx.env, rawRight.right.name)?.kind === "optional"));
+          (leftIsOptVar !== rightIsOptVar) &&
+          !rawExprMentionsAny(leftIsOptVar ? rawRight.right : rawRight.left, narrowedVars);
         if (!isDirectSingleOptCmp) {
-          rightCtx = collectOrChainNarrowings(left, ctx);
+          rightCtx = orCtx;
         }
       }
       let right = resolveExpr(rawRight, rightCtx);
@@ -1409,10 +1421,18 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       // left ?? right — result type is left's inner (when left is optional)
       // or just left's type, unified with right's type.
       const left = resolveExpr(e.left, ctx);
+      const isLeftUndef = (left.kind === "var" && left.name === "undefined") || left.ty.kind === "void";
+      const isArrayIndex = left.kind === "index" && left.obj.ty.kind === "array";
       const inner: Ty = left.ty.kind === "optional" ? left.ty.inner : left.ty;
       // The default shares the result type, so coerce a string literal to a
       // string-union enum (e.g. `availableLevels[0] ?? "off"`).
-      const right = coerceToTargetTy(resolveExpr(e.right, ctx), inner, ctx.typeDecls);
+      const right = coerceToTargetTy(resolveExpr(e.right, ctx), isLeftUndef ? { kind: "unknown" } : inner, ctx.typeDecls);
+      // When `left` is non-optional and not an unchecked array index (#352):
+      // `undefined ?? right` has `right`'s type, and `nonOpt ?? right` evaluates
+      // to `left` directly (narrow.ts strips the dead fallback).
+      if (left.ty.kind !== "optional" && !isArrayIndex) {
+        return { kind: "nullish", left, right, ty: isLeftUndef ? right.ty : left.ty };
+      }
       // `??` is only total when its default is: with a nullable right operand
       // (rule-chain style `ruleA(e) ?? ruleB(e) ?? null`), the result stays
       // optional — otherwise the enclosing chain level loses its optionality
@@ -1427,6 +1447,8 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       // (collapsed: if finalStepTy is already optional, we don't double-wrap).
       // Narrow rewrites this to a someMatch with the chain applied to the binder.
       const obj = resolveExpr(e.obj, ctx);
+      const isObjUndef = (obj.kind === "var" && obj.name === "undefined") || obj.ty.kind === "void";
+      const isObjArrayIndex = obj.kind === "index" && obj.obj.ty.kind === "array";
       let stepInTy = obj.ty.kind === "optional" ? obj.ty.inner : obj.ty;
       const chain: import("./typedir.js").TChainStep[] = [];
       for (const step of e.chain) {
@@ -1478,7 +1500,11 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
         }
       }
       const finalTy = stepInTy;
-      const ty: Ty = finalTy.kind === "optional" ? finalTy : { kind: "optional", inner: finalTy };
+      // Non-optional receiver (excluding unchecked array index) never produces
+      // None from the `?.` step itself (#352); narrow.ts lowers it directly.
+      const ty: Ty = isObjUndef ? { kind: "void" }
+        : (obj.ty.kind !== "optional" && !isObjArrayIndex) ? finalTy
+        : finalTy.kind === "optional" ? finalTy : { kind: "optional", inner: finalTy };
       return { kind: "optChain", obj, chain, ty };
     }
 
@@ -1708,30 +1734,121 @@ function splitConj(e: RawExpr): RawExpr[] {
 
 // ── Resolve statements ───────────────────────────────────────
 
+/** True if `e` references any variable name in `names`. */
+function rawExprMentionsAny(e: RawExpr, names: Set<string>): boolean {
+  if (names.size === 0) return false;
+  switch (e.kind) {
+    case "var": return names.has(e.name);
+    case "num": case "bigint": case "str": case "bool": case "havoc": return false;
+    case "binop": return rawExprMentionsAny(e.left, names) || rawExprMentionsAny(e.right, names);
+    case "unop": case "nonNull": return rawExprMentionsAny(e.expr, names);
+    case "field": return rawExprMentionsAny(e.obj, names);
+    case "index": return rawExprMentionsAny(e.obj, names) || rawExprMentionsAny(e.idx, names);
+    case "call": return rawExprMentionsAny(e.fn, names) || e.args.some(a => rawExprMentionsAny(a, names));
+    case "record":
+      return (e.spread ? rawExprMentionsAny(e.spread, names) : false) ||
+        e.fields.some(f => rawExprMentionsAny(f.value, names));
+    case "arrayLiteral": return e.elems.some(el => rawExprMentionsAny(el, names));
+    case "conditional":
+      return rawExprMentionsAny(e.cond, names) || rawExprMentionsAny(e.then, names) || rawExprMentionsAny(e.else, names);
+    case "nullish": return rawExprMentionsAny(e.left, names) || rawExprMentionsAny(e.right, names);
+    case "optChain": return rawExprMentionsAny(e.obj, names);
+    case "forall": case "exists": return rawExprMentionsAny(e.body, names);
+    case "lambda": return false;
+    default: return false;
+  }
+}
+
+/** Collect root variable names assigned anywhere in `stmts` (both direct
+ *  assignments `x = ...` and dotted field writes `x.f = ...`). */
+function collectAssignedRootsRaw(stmts: RawStmt[], out = new Set<string>()): Set<string> {
+  for (const s of stmts) {
+    if (s.kind === "assign") {
+      out.add(s.target.split(".")[0]!);
+    } else if (s.kind === "if") {
+      collectAssignedRootsRaw(s.then, out);
+      collectAssignedRootsRaw(s.else, out);
+    } else if (s.kind === "while" || s.kind === "forof") {
+      collectAssignedRootsRaw(s.body, out);
+    } else if (s.kind === "switch") {
+      for (const c of s.cases) collectAssignedRootsRaw(c.body, out);
+      collectAssignedRootsRaw(s.defaultBody, out);
+    }
+  }
+  return out;
+}
+
+/** Restore any narrowed optional variable in `roots` back to its declared
+ *  `storageTy`, and drop `narrowedPaths` whose root is in `roots`. Used when
+ *  entering a loop (`while`/`forof`) or exiting a control-flow statement that
+ *  may reassign or clear a previously narrowed variable. */
+function invalidateNarrowings(
+  env: Env | null,
+  narrowedPaths: NarrowedPath[],
+  roots: Set<string>,
+): { env: Env | null; narrowedPaths: NarrowedPath[] } {
+  if (roots.size === 0) return { env, narrowedPaths };
+  let nextEnv = env;
+  for (const root of roots) {
+    const cur = lookup(nextEnv, root);
+    const storage = storageLookup(nextEnv, root);
+    if (storage?.kind === "optional" && cur && cur.kind !== "optional") {
+      nextEnv = refine(nextEnv, root, storage);
+    }
+  }
+  const nextPaths = narrowedPaths.filter(np => !roots.has(np.path.rootVar));
+  return { env: nextEnv, narrowedPaths: nextPaths };
+}
+
 /** True if `stmts` definitely assigns a non-optional, non-`undefined` value
- *  to `varName` (without subsequently clearing it to `undefined`/optional)
- *  on every non-terminating exit path. Used for `#340` assignment narrowing:
+ *  to `varName` (without subsequently clearing or shadowing it) on every
+ *  non-terminating exit path. Used for `#340` assignment narrowing:
  *  `if (v === undefined) { v = 6; } return v + 3;`. */
 function definitelyAssignsNonOptional(stmts: RawStmt[], varName: string, ctx: Ctx): boolean {
   let assigned = false;
+  let env = ctx.env;
+  const targetStorage = storageLookup(env, varName);
   for (const st of stmts) {
     if (isTerminatorKind(st.kind)) return true;
+    if (st.kind === "let") {
+      // Inner `let` shadowing `varName` prevents outer assignment tracking.
+      if (st.name === varName) return assigned;
+      const [, nextEnv] = resolveStmt(st, { ...ctx, env });
+      env = nextEnv;
+      continue;
+    }
     if (st.kind === "assign" && st.target === varName) {
       if (st.value.kind === "var" && st.value.name === "undefined") {
         assigned = false;
       } else {
-        const rhsTy = resolveExpr(st.value, ctx).ty;
+        const rhsCtx: Ctx = { ...ctx, env, returnTy: targetStorage ?? ctx.returnTy };
+        const rhsTy = resolveExpr(st.value, rhsCtx).ty;
         assigned = rhsTy.kind !== "optional" && rhsTy.kind !== "void" && rhsTy.kind !== "unknown";
       }
     } else if (st.kind === "if") {
+      const subCtx: Ctx = { ...ctx, env };
       if (st.else.length > 0 &&
-          definitelyAssignsNonOptional(st.then, varName, ctx) &&
-          definitelyAssignsNonOptional(st.else, varName, ctx)) {
+          definitelyAssignsNonOptional(st.then, varName, subCtx) &&
+          definitelyAssignsNonOptional(st.else, varName, subCtx)) {
         assigned = true;
+      } else if (collectAssignedRootsRaw(st.then).has(varName) || collectAssignedRootsRaw(st.else).has(varName)) {
+        assigned = false;
       }
+    } else if (st.kind === "while" || st.kind === "forof") {
+      if (collectAssignedRootsRaw(st.body).has(varName)) assigned = false;
+    } else if (st.kind === "switch") {
+      const swAssigned = sHasRootAssignSwitch(st, varName);
+      if (swAssigned) assigned = false;
     }
   }
   return assigned;
+}
+
+function sHasRootAssignSwitch(s: Extract<RawStmt, { kind: "switch" }>, varName: string): boolean {
+  for (const c of s.cases) {
+    if (collectAssignedRootsRaw(c.body).has(varName)) return true;
+  }
+  return collectAssignedRootsRaw(s.defaultBody).has(varName);
 }
 
 function resolveBlock(stmts: RawStmt[], ctx: Ctx): TStmt[] {
@@ -1746,18 +1863,33 @@ function resolveBlock(stmts: RawStmt[], ctx: Ctx): TStmt[] {
     env = nextEnv;
     // Assignment narrowing (#340): assigning a non-optional value to an optional
     // variable narrows it for subsequent statements; assigning `undefined` or an
-    // optional restores its declared optional storage type.
-    if (s.kind === "assign" && !s.target.includes(".")) {
-      const storage = storageLookup(env, s.target);
-      if (storage?.kind === "optional") {
-        const isUndef = s.value.kind === "var" && s.value.name === "undefined";
-        const rawTy = isUndef ? { kind: "void" as const } : resolveExpr(s.value, currentCtx).ty;
-        if (!isUndef && rawTy.kind !== "optional" && rawTy.kind !== "void" && rawTy.kind !== "unknown") {
-          env = refine(env, s.target, storage.inner);
-        } else {
-          env = refine(env, s.target, storage);
+    // optional restores its declared optional storage type. Also drop stale
+    // narrowedPaths rooted at any assigned target (including field writes).
+    if (s.kind === "assign") {
+      const root = s.target.split(".")[0]!;
+      narrowedPaths = narrowedPaths.filter(np => np.path.rootVar !== root);
+      if (!s.target.includes(".")) {
+        const storage = storageLookup(env, s.target);
+        if (storage?.kind === "optional") {
+          const isUndef = s.value.kind === "var" && s.value.name === "undefined";
+          const rhsCtx: Ctx = { ...currentCtx, returnTy: storage };
+          const rawTy = isUndef ? { kind: "void" as const } : resolveExpr(s.value, rhsCtx).ty;
+          if (!isUndef && rawTy.kind !== "optional" && rawTy.kind !== "void" && rawTy.kind !== "unknown") {
+            env = refine(env, s.target, storage.inner);
+          } else {
+            env = refine(env, s.target, storage);
+          }
         }
       }
+    }
+    // Control-flow invalidation: if an `if`/`while`/`forof`/`switch` may assign
+    // a narrowed variable or path, restore its declared optional storage type
+    // before subsequent statements (definite-assignment guards re-narrow below).
+    if (s.kind === "if" || s.kind === "while" || s.kind === "forof" || s.kind === "switch") {
+      const mutated = collectAssignedRootsRaw([s]);
+      const inv = invalidateNarrowings(env, narrowedPaths, mutated);
+      env = inv.env;
+      narrowedPaths = inv.narrowedPaths;
     }
     // Definite-assignment guard (#340): `if (v === undefined) { v = nonOpt; }`
     // guarantees `v` is present after the `if` on both branches.
@@ -1920,14 +2052,20 @@ function resolveStmt(s: RawStmt, ctx: Ctx): [TStmt, Env | null] {
     }
 
     case "while": {
-      const whileSpecCtx = { ...ctx, inSpec: true };
+      // Any variable or path mutated inside the loop body cannot keep a pre-loop
+      // narrowing across iterations (including inside the loop condition and
+      // invariants on back-edges).
+      const loopMutated = collectAssignedRootsRaw(s.body);
+      const loopInv = invalidateNarrowings(ctx.env, ctx.narrowedPaths, loopMutated);
+      const loopCtx: Ctx = { ...ctx, env: loopInv.env, narrowedPaths: loopInv.narrowedPaths };
+      const whileSpecCtx = { ...loopCtx, inSpec: true };
       const resolvedInvariants = resolveSpecs(s.invariants, whileSpecCtx);
-      const resolvedCond = resolveExpr(s.cond, ctx);
+      const resolvedCond = resolveExpr(s.cond, loopCtx);
       // Invariants and presence checks in the `while` condition (#339) both hold
       // at the top of the loop body.
       const bodyCtx = collectAndChainNarrowings(
         resolvedCond,
-        withInAtoms(ctx, resolvedInvariants.flatMap(extractInAtoms)),
+        withInAtoms(loopCtx, resolvedInvariants.flatMap(extractInAtoms)),
       );
       return [{
         kind: "while",
@@ -1967,11 +2105,14 @@ function resolveStmt(s: RawStmt, ctx: Ctx): [TStmt, Env | null] {
       const count = ctx.forofCounts.get(s.names[0]) ?? 0;
       ctx.forofCounts.set(s.names[0], count + 1);
       const idxName = freshName(`_${s.names[0]}_idx${count === 0 ? "" : count + 1}`);
+      const loopMutated = collectAssignedRootsRaw(s.body);
+      const loopInv = invalidateNarrowings(ctx.env, ctx.narrowedPaths, loopMutated);
+      env = loopInv.env;
       env = extend(env, idxName, { kind: "nat" });
       for (let j = 0; j < s.names.length; j++) {
         env = extend(env, s.names[j], nameTypes[j] ?? { kind: "unknown" });
       }
-      const bodyCtx = withEnv(ctx, env);
+      const bodyCtx: Ctx = { ...ctx, env, narrowedPaths: loopInv.narrowedPaths };
       return [{
         kind: "forof", names: s.names, nameTypes, iterable, idx: idxName,
         invariants: resolveSpecs(s.invariants, { ...bodyCtx, inSpec: true }),

@@ -423,12 +423,19 @@ function promoteAssignedLets(stmts: Stmt[]): Stmt[] {
 
 /** Build a nested record-update assigning `newVal` to a field-path receiver
  *  rooted at a var: `b.a.items` → `b := b.(a := b.a.(items := newVal))`.
- *  Returns null if the path isn't a chain of field accesses ending at a var. */
+ *  Handles `checkedUnwrap` hops along the path by wrapping the updated record
+ *  in `Some(...)`. Returns null if the path isn't a chain of field accesses
+ *  (with optional checked unwraps) ending at a var. */
 function buildNestedFieldUpdate(recv: TExpr, newVal: Expr): { root: string; value: Expr } | null {
   if (recv.kind !== "field") return null;
   const upd: Expr = { kind: "record", spread: lowerExpr(recv.obj, null), fields: [{ name: recv.field, value: newVal }] };
   if (recv.obj.kind === "var") return { root: recv.obj.name, value: upd };
   if (recv.obj.kind === "field") return buildNestedFieldUpdate(recv.obj, upd);
+  if (recv.obj.kind === "checkedUnwrap") {
+    const wrapped: Expr = { kind: "app", fn: "Some", args: [upd] };
+    if (recv.obj.expr.kind === "var") return { root: recv.obj.expr.name, value: wrapped };
+    if (recv.obj.expr.kind === "field") return buildNestedFieldUpdate(recv.obj.expr, wrapped);
+  }
   return null;
 }
 
@@ -612,8 +619,8 @@ function lowerExpr(e: TExpr, binds: Stmt[] | null): Expr {
         const cmpOp = BOOL_OP_MAP[op] ?? op;
         const noneVal = e.op === "!==" ? true : false;
         const bound = matchBinder("value");
-        if (hasPreconditionExpr(valSide)) {
-          const tmp = freshName("_cmp");
+        if (!_inSpec && valExpr.kind !== "var" && hasPreconditionExpr(valSide)) {
+          const tmp = freshName(`_cmp${_cmpCounter++}`);
           return {
             kind: "let",
             name: tmp,
@@ -1768,7 +1775,7 @@ function transformStmts(stmts: TStmt[], typeDecls: TypeDeclInfo[]): Stmt[] {
         eliminateTopLevelContinue(transformStmts(s.body, typeDecls)), idxName);
       result.push({
         kind: "forin", idx: idxName, bound: arrSize,
-        invariants: [boundInv, ...s.invariants.map(transformExpr)],
+        invariants: [boundInv, ...s.invariants.map(transformSpecExpr)],
         body: [...perIter, ...bodyStmts],
       });
       i++;
@@ -1784,6 +1791,21 @@ let _liftCounter = 0;
 let _callbackCounter = 0;
 // Branch results must not renumber the existing lifted-call temporaries.
 let _branchCounter = 0;
+let _cmpCounter = 0;
+// True while lowering proof-only spec clauses (`requires`, `ensures`, `invariants`,
+// `decreases`, `doneWith`). Prevents executable-only rewrites like `#349` `let _cmp`
+// from firing inside specifications.
+let _inSpec = false;
+
+function transformSpecExpr(e: TExpr): Expr {
+  const prev = _inSpec;
+  _inSpec = true;
+  try {
+    return transformExpr(e);
+  } finally {
+    _inSpec = prev;
+  }
+}
 // Active narrowing write-back frames (`someMatch` unwraps & union variant arms).
 let _writeBackFrames: WriteBackFrame[] = [];
 // Declared types of in-scope variables and narrowing binders (for optional-field wrap checks).
@@ -2091,6 +2113,27 @@ function transformStmt(s: TStmt, typeDecls: TypeDeclInfo[]): Stmt[] {
               ];
             }
           }
+          if (recv.kind === "checkedUnwrap") {
+            const { binds, expr } = liftMethodCalls(s.expr);
+            const wrapped: Expr = { kind: "app", fn: "Some", args: [expr] };
+            if (recv.expr.kind === "var") {
+              return [
+                ...binds,
+                { kind: "assign", target: recv.expr.name, value: wrapped },
+                ...emitWriteBacksForTarget(recv.expr.name, _writeBackFrames),
+              ];
+            }
+            if (recv.expr.kind === "field") {
+              const upd = buildNestedFieldUpdate(recv.expr, wrapped);
+              if (upd) {
+                return [
+                  ...binds,
+                  { kind: "assign", target: upd.root, value: upd.value },
+                  ...emitWriteBacksForTarget(upd.root, _writeBackFrames),
+                ];
+              }
+            }
+          }
           throw new Error(
             `Unsupported in-place mutation \`${describeReceiver(recv)}.${f}(...)\`: ` +
             `receiver is not a writable Place rooted at a variable (bind it to a variable or mutate through a field path).`,
@@ -2138,9 +2181,9 @@ function transformStmt(s: TStmt, typeDecls: TypeDeclInfo[]): Stmt[] {
       return [{
         kind: "while",
         cond: transformExpr(asCondition(s.cond)),
-        invariants: s.invariants.map(transformExpr),
-        decreasing: s.decreases ? transformExpr(s.decreases) : null,
-        doneWith: s.doneWith ? transformExpr(s.doneWith) : null,
+        invariants: s.invariants.map(transformSpecExpr),
+        decreasing: s.decreases ? transformSpecExpr(s.decreases) : null,
+        doneWith: s.doneWith ? transformSpecExpr(s.doneWith) : null,
         body: eliminateTopLevelContinue(transformStmts(s.body, typeDecls)),
       }];
 
@@ -2338,7 +2381,7 @@ function emitMatchStmt(
       arms.push({ pattern: pWild(), body: transformStmts(fallthrough, typeDecls) });
     }
   }
-  return { kind: "match", scrutinee: isPath ? transformExpr(scrutinee) : varE(prefix), arms };
+  return { kind: "match", scrutinee: (isPath || scrutinee.kind === "checkedUnwrap") ? transformExpr(scrutinee) : varE(prefix), arms };
 }
 
 /** Replace bare `var(oldName)` references → `var(newName)` with the given type.
@@ -2465,7 +2508,11 @@ function replaceFieldsInTStmts(
 ): TStmt[] {
   if (replacements.length === 0) return stmts;
   return stmts.map(s => mapTStmt(s, e => {
-    if (e.kind === "field" && e.obj.kind === "var" && e.obj.name === objName) {
+    const objMatches = e.kind === "field" && (
+      (e.obj.kind === "var" && e.obj.name === objName) ||
+      (e.obj.kind === "checkedUnwrap" && e.obj.expr.kind === "var" && e.obj.expr.name === objName)
+    );
+    if (objMatches && e.kind === "field") {
       const r = replacements.find(r => r.fieldName === e.field);
       if (r) {
         const ty = e.ty.kind !== "unknown" ? e.ty : r.fallbackTy;
@@ -2547,6 +2594,7 @@ interface AccessPath { rootVar: string; fields: string[] }
 
 function asTAccessPath(e: TExpr): AccessPath | null {
   if (e.kind === "var") return { rootVar: e.name, fields: [] };
+  if (e.kind === "checkedUnwrap") return asTAccessPath(e.expr);
   if (e.kind === "field") {
     const inner = asTAccessPath(e.obj);
     if (!inner) return null;
@@ -2559,7 +2607,10 @@ function asTAccessPath(e: TExpr): AccessPath | null {
 function matchesAccessPath(e: TExpr, path: AccessPath): boolean {
   const collected: string[] = [];
   let cur = e;
-  while (cur.kind === "field") { collected.unshift(cur.field); cur = cur.obj; }
+  while (cur.kind === "field" || cur.kind === "checkedUnwrap") {
+    if (cur.kind === "field") { collected.unshift(cur.field); cur = cur.obj; }
+    else { cur = cur.expr; }
+  }
   if (cur.kind !== "var" || cur.name !== path.rootVar) return false;
   if (collected.length !== path.fields.length) return false;
   return collected.every((f, i) => f === path.fields[i]);
@@ -2849,6 +2900,8 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
   _liftCounter = 0;
   _callbackCounter = 0;
   _branchCounter = 0;
+  _cmpCounter = 0;
+  _inSpec = false;
   _writeBackFrames = [];
   _typeDecls = mod.typeDecls;
   _neededKindHelpers = new Map();
@@ -2872,16 +2925,16 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
     if (body) {
       // For pure-function lemmas, replace \result with the function call.
       const fnCall: Expr = { kind: "app", fn: fn.name, args: fn.params.map(p => ({ kind: "var" as const, name: p.name })) };
-      const ensures = fn.ensures.map(e => replaceVar(transformExpr(e), "\\result", fnCall));
+      const ensures = fn.ensures.map(e => replaceVar(transformSpecExpr(e), "\\result", fnCall));
       pureDefs.push({
         kind: "def",
         name: fn.name,
         typeParams: fn.typeParams,
         params: fn.params.map(p => ({ name: p.name, type: p.ty })),
         returnType: fn.returnTy,
-        requires: fn.requires.map(transformExpr),
+        requires: fn.requires.map(transformSpecExpr),
         ensures,
-        decreases: fn.decreases ? transformExpr(fn.decreases) : null,
+        decreases: fn.decreases ? transformSpecExpr(fn.decreases) : null,
         body,
       });
     } else if (fn.forcePure) {
@@ -2895,9 +2948,9 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
         typeParams: fn.typeParams,
         params: fn.params.map(p => ({ name: p.name, type: p.ty })),
         returnType: fn.returnTy,
-        requires: fn.requires.map(transformExpr),
-        ensures: fn.ensures.map(transformExpr),
-        decreases: fn.decreases ? transformExpr(fn.decreases) : null,
+        requires: fn.requires.map(transformSpecExpr),
+        ensures: fn.ensures.map(transformSpecExpr),
+        decreases: fn.decreases ? transformSpecExpr(fn.decreases) : null,
         methodBody,
       });
     }
@@ -2945,10 +2998,10 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
       typeParams: ext.typeParams,
       params: ext.params.map(p => ({ name: p.name, type: p.ty })),
       returnType: ext.returnTy,
-      requires: ext.requires.map(transformExpr),
+      requires: ext.requires.map(transformSpecExpr),
       ensures: ext.ensures.map(e => ext.impure
-        ? transformExpr(e)
-        : replaceVar(transformExpr(e), "\\result", fnCall)),
+        ? transformSpecExpr(e)
+        : replaceVar(transformSpecExpr(e), "\\result", fnCall)),
       impure: ext.impure,
     };
   });
@@ -2960,10 +3013,16 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
   const pureDefNames = new Set([...pureDefs.map(d => d.name), ...defByMethods.map(d => d.name)]);
   const methods: FnMethod[] = mod.functions.map(fn => {
     const ensures: Expr[] = [];
-    for (const e of fn.ensures) {
-      const m = ensuresToMatch(e, mod.typeDecls);
-      if (m) ensures.push(m);
-      else ensures.push(transformExpr(e));
+    const prevInSpec = _inSpec;
+    _inSpec = true;
+    try {
+      for (const e of fn.ensures) {
+        const m = ensuresToMatch(e, mod.typeDecls);
+        if (m) ensures.push(m);
+        else ensures.push(transformExpr(e));
+      }
+    } finally {
+      _inSpec = prevInSpec;
     }
 
     _forofCounters.clear();
@@ -2982,7 +3041,7 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
     // since loom's default loop-exit fact `¬guard` does not hold across a break.
     if (_opts.backend === "lean" && !pureDefNames.has(fn.name)) {
       body = matchToIfChains(body);
-      const resultInvariants = fn.ensures.map(e => replaceVar(transformExpr(e), "\\result", { kind: "var", name: "_loopRet" }));
+      const resultInvariants = fn.ensures.map(e => replaceVar(transformSpecExpr(e), "\\result", { kind: "var", name: "_loopRet" }));
       body = eliminateReturnInLoops(body, fn.returnTy, resultInvariants);
       requireDoneWithForBreaks(body, fn.name);
     }
@@ -3007,9 +3066,9 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
       typeParams: fn.typeParams,
       params: fn.params.map(p => ({ name: p.name, type: p.ty })),
       returnType: fn.returnTy,
-      requires: fn.requires.map(transformExpr),
+      requires: fn.requires.map(transformSpecExpr),
       ensures,
-      decreases: fn.decreases ? transformExpr(fn.decreases) : null,
+      decreases: fn.decreases ? transformSpecExpr(fn.decreases) : null,
       body,
     };
   });
@@ -3017,7 +3076,7 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
   // Class declarations
   const classDecls: Decl[] = (mod.classes ?? []).map(cls => {
     const classMethods: FnMethod[] = cls.methods.map(fn => {
-      const ensures: Expr[] = fn.ensures.map(transformExpr);
+      const ensures: Expr[] = fn.ensures.map(transformSpecExpr);
       _forofCounters.clear();
       _writeBackFrames = [];
       _varTypes = new Map(fn.params.map(p => [p.name, p.ty]));
@@ -3039,9 +3098,9 @@ export function transformModule(mod: TModule, specImport?: string, moduleBaseOve
         typeParams: fn.typeParams,
         params: fn.params.map(p => ({ name: p.name, type: p.ty })),
         returnType: fn.returnTy,
-        requires: fn.requires.map(transformExpr),
+        requires: fn.requires.map(transformSpecExpr),
         ensures,
-        decreases: fn.decreases ? transformExpr(fn.decreases) : null,
+        decreases: fn.decreases ? transformSpecExpr(fn.decreases) : null,
         body,
       };
     });

@@ -167,37 +167,60 @@ function isTerminating(stmts: TStmt[]): boolean {
 
 // ── Presence drivers ────────────────────────────────────────
 
-/** True if `stmts` contains a direct assignment to `varName` that could set it
+/** Dotted path key for a pure variable/field expression, or null. */
+function exprPathStr(e: TExpr): string | null {
+  if (e.kind === "var") return e.name;
+  if (e.kind === "checkedUnwrap") return exprPathStr(e.expr);
+  if (e.kind === "field") {
+    const inner = exprPathStr(e.obj);
+    return inner === null ? null : `${inner}.${e.field}`;
+  }
+  return null;
+}
+
+/** True if `stmts` contains an assignment to `pathStr` (or any prefix of
+ *  `pathStr`, e.g. `box = ...` when narrowing `box.val`) that could clear it
  *  to `undefined` or an arbitrary `Option<T>` (not a `Some(...)` wrapper),
  *  meaning a `someMatch` binder would become stale (#342). */
-function stmtsMayClearVar(stmts: readonly TStmt[], varName: string): boolean {
+function stmtsMayClearPath(stmts: readonly TStmt[], pathStr: string): boolean {
   for (const s of stmts) {
-    if (s.kind === "assign" && s.target === varName) {
-      const isSomeWrap = s.value.kind === "call" && s.value.fn.kind === "var" &&
-        s.value.fn.name === "Some" && s.value.args.length === 1;
-      if (!isSomeWrap && (s.value.ty.kind === "optional" || s.value.ty.kind === "void" ||
-          (s.value.kind === "var" && s.value.name === "undefined"))) {
+    if (s.kind === "assign") {
+      if (s.target === pathStr) {
+        const isSomeWrap = s.value.kind === "call" && s.value.fn.kind === "var" &&
+          s.value.fn.name === "Some" && s.value.args.length === 1;
+        if (!isSomeWrap && (s.value.ty.kind === "optional" || s.value.ty.kind === "void" ||
+            (s.value.kind === "var" && s.value.name === "undefined"))) {
+          return true;
+        }
+      } else if (pathStr.startsWith(`${s.target}.`)) {
+        // Reassigning a container prefix (e.g. `box = newBox`) can replace the
+        // narrowed field with None, making a binder on `box.val` stale.
         return true;
       }
     } else if (s.kind === "if") {
-      if (stmtsMayClearVar(s.then, varName) || stmtsMayClearVar(s.else, varName)) return true;
+      if (stmtsMayClearPath(s.then, pathStr) || stmtsMayClearPath(s.else, pathStr)) return true;
     } else if (s.kind === "while" || s.kind === "forof") {
-      if (stmtsMayClearVar(s.body, varName)) return true;
+      if (stmtsMayClearPath(s.body, pathStr)) return true;
     } else if (s.kind === "switch") {
-      if (s.cases.some(c => stmtsMayClearVar(c.body, varName)) || stmtsMayClearVar(s.defaultBody, varName)) return true;
+      if (s.cases.some(c => stmtsMayClearPath(c.body, pathStr)) || stmtsMayClearPath(s.defaultBody, pathStr)) return true;
     } else if (s.kind === "someMatch") {
-      if (stmtsMayClearVar(s.someBody, varName) || stmtsMayClearVar(s.noneBody, varName)) return true;
+      if (stmtsMayClearPath(s.someBody, pathStr) || stmtsMayClearPath(s.noneBody, pathStr)) return true;
     } else if (s.kind === "tagMatch") {
-      if (s.cases.some(c => stmtsMayClearVar(c.body, varName)) || stmtsMayClearVar(s.fallthrough, varName)) return true;
+      if (s.cases.some(c => stmtsMayClearPath(c.body, pathStr)) || stmtsMayClearPath(s.fallthrough, pathStr)) return true;
     }
   }
   return false;
 }
 
+function scrutineeMayBeCleared(scrutinee: TExpr, stmts: readonly TStmt[]): boolean {
+  const pathStr = exprPathStr(scrutinee);
+  return pathStr !== null && stmtsMayClearPath(stmts, pathStr);
+}
+
 /** Driver: `if (e !== undefined) then else` — presence fact in if position.
  *  → `someMatch e { Some(_e_val) => then, None => else }`. Requires a
  *  non-empty Some branch, and defers to checked reads when `someBody` may
- *  clear `e` to `undefined`/optional (#342). */
+ *  clear `e` (or a prefix of `e`) to `undefined`/optional (#342). */
 function ruleIfOptionalSimple(s: TStmt, ctx: CondCtx): TStmt | null {
   if (s.kind !== "if") return null;
   const check = presentFact(s.cond);
@@ -205,7 +228,7 @@ function ruleIfOptionalSimple(s: TStmt, ctx: CondCtx): TStmt | null {
   const someBody = check.negated ? s.else : s.then;
   const noneBody = check.negated ? s.then : s.else;
   if (someBody.length === 0) return null;
-  if (check.scrutinee.kind === "var" && stmtsMayClearVar(someBody, check.scrutinee.name)) return null;
+  if (scrutineeMayBeCleared(check.scrutinee, someBody)) return null;
   return presentMatchStmts(check, someBody, noneBody, ctx);
 }
 
@@ -221,7 +244,7 @@ function ruleEarlyReturnConsume(s: TStmt, rest: TStmt[], ctx: CondCtx): TStmt | 
   const noneBranch = check.negated ? s.then : s.else;
   if (someBranch.length !== 0) return null;
   if (!isTerminating(noneBranch)) return null;
-  if (check.scrutinee.kind === "var" && stmtsMayClearVar(rest, check.scrutinee.name)) return null;
+  if (scrutineeMayBeCleared(check.scrutinee, rest)) return null;
   return presentMatchStmts(check, rest, noneBranch, ctx);
 }
 
@@ -252,6 +275,7 @@ function ruleEarlyReturnOrChain(s: TStmt, rest: TStmt[], ctx: CondCtx): TStmt | 
     if (d.residual) residualLeaves.push(d.residual);
   }
   if (detectors.length === 0) return null;
+  if (detectors.some(d => scrutineeMayBeCleared(d.scrutinee, rest))) return null;
 
   let inner: TStmt[] = residualLeaves.length === 0
     ? rest
@@ -279,6 +303,7 @@ function ruleEarlyReturnOptChainCompare(s: TStmt, rest: TStmt[], ctx: CondCtx): 
   if (c.kind !== "binop" || c.op !== "!==") return null;
   const oc = c.left.kind === "optChain" ? c.left : c.right.kind === "optChain" ? c.right : null;
   if (!oc || oc.kind !== "optChain" || oc.obj.ty.kind !== "optional") return null;
+  if (scrutineeMayBeCleared(oc.obj, rest)) return null;
   const lit = c.left === oc ? c.right : c.left;
   const innerTy = oc.obj.ty.inner;
   const binder = freshPathBinder(oc.obj, ctx);
@@ -495,6 +520,7 @@ function ruleIfAndOptional(s: TStmt, ctx: CondCtx): TStmt | null {
   const extracted = leadingPresent(s.cond);
   if (!extracted) return null;
   const { check, restCond } = extracted;
+  if (scrutineeMayBeCleared(check.scrutinee, s.then)) return null;
   const innerIf: TStmt = { kind: "if", cond: restCond, then: s.then, else: [] };
   return presentMatchStmts(check, [walkStmt(innerIf, ctx)], [], ctx);
 }

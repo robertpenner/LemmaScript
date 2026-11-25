@@ -317,3 +317,216 @@ test("Milestone 4 (#52): upstream reproductions #342, #352, #353, #354 verify cl
     rmSync(workDir, { recursive: true, force: true });
   }
 });
+
+test("Milestone 4 (#52): review regressions — Lean dependent checkedUnwrap & nested _cmp, control-flow invalidation, nested someMatch/tagMatch/push, clearing guards, and non-optional ?./??", () => {
+  const project = makeProject();
+  const workDir = mkdtempSync(path.join(tmpdir(), "lsc-m4-review-"));
+  try {
+    // Findings 1 & 7: Lean dependent `if _h :` for `&&`/`||`/`?:` containing checkedUnwrap,
+    // plus parenthesized `(let _cmp0 := ...; ...)` inside function calls. Verify with real `lean` CLI!
+    const leanSf = project.createSourceFile(
+      "lean_checked_regressions.ts",
+      [
+        "//@ pure",
+        "export function myGuard(ok: boolean, v: number): number {",
+        "  //@ requires ok",
+        "  return v;",
+        "}",
+        "//@ pure",
+        "export function idb(b: boolean): boolean { return b; }",
+        "//@ pure",
+        "export function cmpAnd(a: number | undefined, b: number | undefined): boolean {",
+        "  return a !== undefined && b !== undefined && a < b;",
+        "}",
+        "//@ pure",
+        "export function cmpOr(a: number | undefined): boolean {",
+        "  return a === undefined || a + 1 > 0;",
+        "}",
+        "//@ pure",
+        "export function nestedCmp(x: number | undefined): boolean {",
+        "  return idb(x === myGuard(true, 1));",
+        "}",
+      ].join("\n"),
+      { overwrite: true },
+    );
+    const leanMod = transformModuleLean(narrowModule(resolveModule(extractModule(leanSf))));
+    const leanTypes = leanMod.typesFile ? emitLeanFile(leanMod.typesFile) : "";
+    const pureMatch = leanTypes.match(/namespace Pure[\s\S]*?end Pure/);
+    assert.ok(pureMatch, `expected Pure namespace in Lean output:\n${leanTypes}`);
+    const leanFile = path.join(workDir, "lean_checked_regressions.lean");
+    writeFileSync(leanFile, pureMatch[0] + "\n");
+    const leanRes = spawnSync("lean", [leanFile], { encoding: "utf8", timeout: 60_000 });
+    assert.equal(leanRes.status, 0, `Lean failed to check emitted Pure defs:\n${pureMatch[0]}\n${leanRes.stdout}\n${leanRes.stderr}`);
+
+    // Findings 2–6: Dafny end-to-end verification via compiled CLI
+    const dafnyCases: Array<{ name: string; code: string; expectPass: boolean }> = [
+      {
+        name: "f2_invalidation_and_presence.ts",
+        expectPass: true,
+        code: [
+          "export function f2a(a: number | undefined): number {",
+          "  let x: number | undefined = a;",
+          "  x = 1;",
+          "  if (x === undefined) { return 0; }",
+          "  return x + 1;",
+          "}",
+          "export function f2b(a: number | undefined, flag: boolean): number {",
+          "  let x: number | undefined = a;",
+          "  x = 1;",
+          "  if (flag) { x = undefined; }",
+          "  if (x !== undefined) { return x; }",
+          "  return 0;",
+          "}",
+          "export function f2c(a: number | undefined, n: number): number {",
+          "  //@ requires n >= 0",
+          "  let x: number | undefined = a;",
+          "  x = 1;",
+          "  let i = 0;",
+          "  while (i < n) {",
+          "    //@ invariant i >= 0",
+          "    //@ decreases n - i",
+          "    if (x !== undefined) { x = undefined; }",
+          "    i = i + 1;",
+          "  }",
+          "  return x !== undefined ? x : 0;",
+          "}",
+        ].join("\n"),
+      },
+      {
+        name: "f3_checked_unwrap_paths_and_push.ts",
+        expectPass: true,
+        code: [
+          "interface Node { inner: number | undefined; }",
+          "type Shape = { kind: 'a'; v: number } | { kind: 'b'; w: number };",
+          "export function f3a(n: Node | undefined): number {",
+          "  let cur: Node | undefined = n;",
+          "  let total = 0;",
+          "  let steps = 0;",
+          "  while (cur !== undefined && steps < 1) {",
+          "    //@ invariant steps >= 0",
+          "    //@ decreases 1 - steps",
+          "    if (cur.inner !== undefined) { total = total + cur.inner; }",
+          "    cur = undefined;",
+          "    steps = steps + 1;",
+          "  }",
+          "  return total;",
+          "}",
+          "export function f3b(s: Shape | undefined): number {",
+          "  let cur: Shape | undefined = s;",
+          "  let out = 0;",
+          "  let steps = 0;",
+          "  while (cur !== undefined && steps < 1) {",
+          "    //@ invariant steps >= 0",
+          "    //@ decreases 1 - steps",
+          "    if (cur.kind === 'a') { out = cur.v; } else { out = cur.w; }",
+          "    cur = undefined;",
+          "    steps = steps + 1;",
+          "  }",
+          "  return out;",
+          "}",
+          "export function f3c(xs: number[] | undefined): number {",
+          "  let a: number[] | undefined = xs;",
+          "  let i = 0;",
+          "  while (a !== undefined && i < 1) {",
+          "    //@ invariant i >= 0",
+          "    //@ decreases 1 - i",
+          "    a.push(2);",
+          "    i = i + 1;",
+          "  }",
+          "  return a !== undefined ? a.length : 0;",
+          "}",
+        ].join("\n"),
+      },
+      {
+        name: "f4_f5_f6_assign_clear_nonopt.ts",
+        expectPass: true,
+        code: [
+          "interface Box { v: number; }",
+          "export function f4a(flag: boolean): number {",
+          "  let x: number | undefined = undefined;",
+          "  if (x === undefined) {",
+          "    x = 1;",
+          "    if (flag) { x = undefined; }",
+          "  }",
+          "  return x !== undefined ? x : 0;",
+          "}",
+          "export function f4b(b: Box | undefined): number {",
+          "  let cur: Box | undefined = b;",
+          "  if (cur === undefined) { cur = { v: 7 }; }",
+          "  return cur.v;",
+          "}",
+          "export function f5(a: number | undefined, b: number): number {",
+          "  let x: number | undefined = a;",
+          "  if (x !== undefined && b > 0) {",
+          "    x = undefined;",
+          "    return x !== undefined ? x : -1;",
+          "  }",
+          "  return 0;",
+          "}",
+          "export function f6(b: Box): number {",
+          "  const x = b?.v;",
+          "  const y = x ?? 0;",
+          "  return x + y;",
+          "}",
+        ].join("\n"),
+      },
+      {
+        name: "f7_relational_guard_rejected.ts",
+        expectPass: false,
+        code: [
+          "//@ pure",
+          "export function guard(ok: boolean, v: number): number {",
+          "  //@ requires ok",
+          "  return v;",
+          "}",
+          "export function badRel(x: number | undefined): boolean {",
+          "  return x < guard(false, 1);",
+          "}",
+        ].join("\n"),
+      },
+    ];
+    for (const c of dafnyCases) {
+      const f = path.join(workDir, c.name);
+      writeFileSync(f, c.code);
+      const res = spawnSync(process.execPath, [compiledCli, "check", "--backend=dafny", f], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: { ...process.env, LSC_RUN_LOG: "false" },
+        timeout: 60_000,
+      });
+      if (c.expectPass) {
+        assert.equal(res.status, 0, `${c.name} should verify:\n${res.stdout}\n${res.stderr}`);
+      } else {
+        assert.notEqual(res.status, 0, `${c.name} must be rejected by Dafny:\n${res.stdout}\n${res.stderr}`);
+      }
+    }
+
+    // Brownfield zero-drift checks:
+    // 1. Spec-clause optional comparison (`ensures`) must not emit `_cmp` temporaries.
+    // 2. Single-optional comparison with independent LHS (`excludeTag === undefined || getTagId(t) !== excludeTag`)
+    //    must keep native `match` lowering instead of `.value`.
+    const driftSf = project.createSourceFile(
+      "brownfield_zero_drift.ts",
+      [
+        "interface Tag { id: number; }",
+        "export function getTagId(t: Tag): number { return t.id; }",
+        "export function specNoCmp(arr: number[], x: number | undefined): boolean {",
+        "  //@ requires arr.length > 0",
+        "  //@ ensures \\result === (x === arr[0])",
+        "  return x === arr[0];",
+        "}",
+        "export function orNativeMatch(t: Tag, excludeTag?: number): boolean {",
+        "  return excludeTag === undefined || getTagId(t) !== excludeTag;",
+        "}",
+      ].join("\n"),
+      { overwrite: true },
+    );
+    const dafnyMod = transformModuleDafny(narrowModule(resolveModule(extractModule(driftSf))));
+    const dafnyOut = emitDafnyFile(dafnyMod.defFile);
+    const specLine = dafnyOut.split("\n").find(l => l.includes("ensures"));
+    assert.ok(specLine && !specLine.includes("_cmp"), `spec clause must not introduce _cmp:\n${dafnyOut}`);
+    assert.doesNotMatch(dafnyOut, /excludeTag\.value/, `single-opt comparison with independent call must keep native match:\n${dafnyOut}`);
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
+});

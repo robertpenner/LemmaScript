@@ -1,0 +1,64 @@
+CLI: Warning: The file 'corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/C_lerp.dfy(27,10): Error: Verification of 'LerpAtOneOvershoots' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+27 |           == 4.99979550208020651069773521157912909984588623046875
+   |           ^^
+
+corpus/C_lerp.dfy(40,20): Error: Verification of 'LerpEndpointsSmallInts' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+40 |   ensures fp64.Equal(Lerp(a, b, 0.0), a)
+   |                     ^
+
+corpus/C_lerp.dfy(41,20): Error: Verification of 'LerpEndpointsSmallInts' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+41 |   ensures fp64.Equal(Lerp(a, b, 1.0), b)
+   |                     ^
+
+corpus/C_lerp.dfy(53,24): Error: Verification of 'LerpInRangeSmallInts' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+53 |   ensures Lerp(a, b, t).IsFinite
+   |                         ^^^^^^^^
+
+corpus/C_lerp.dfy(54,26): Error: Verification of 'LerpInRangeSmallInts' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+54 |   ensures fp64.LessOrEqual(a, Lerp(a, b, t)) && fp64.LessOrEqual(Lerp(a, b, t), b)
+   |                           ^
+
+corpus/C_lerp.dfy(54,64): Error: Verification of 'LerpInRangeSmallInts' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+54 |   ensures fp64.LessOrEqual(a, Lerp(a, b, t)) && fp64.LessOrEqual(Lerp(a, b, t), b)
+   |                                                                 ^
+
+corpus/C_lerp.dfy(68,47): Error: Verification of 'BridgeRoundTrip' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+68 |   ensures fp64.ToInt(fp64.FromReal(i as real)) == i
+   |                                                ^^
+
+corpus/C_lerp.dfy(69,0): Error: a postcondition could not be proved on this return path
+   |
+69 | {
+   | ^
+
+corpus/C_lerp.dfy(67,35): Related location: this is the postcondition that could not be proved
+   |
+67 |   ensures fp64.FromReal(i as real).IsFinite
+   |                                    ^^^^^^^^
+
+corpus/C_lerp.dfy(75,20): Error: Verification of 'BridgeAdd' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+75 |   ensures Add(x, y).IsFinite && Add(x, y) as real == x as real + y as real
+   |                     ^^^^^^^^
+
+corpus/C_lerp.dfy(76,0): Error: a postcondition could not be proved on this return path
+   |
+76 | {
+   | ^
+
+corpus/C_lerp.dfy(75,50): Related location: this is the postcondition that could not be proved
+   |
+75 |   ensures Add(x, y).IsFinite && Add(x, y) as real == x as real + y as real
+   |                                                   ^^
+
+
+Dafny program verifier finished with 19 verified, 2 errors, 8 time outs
+Results File: results/verify/C_lerp.csv

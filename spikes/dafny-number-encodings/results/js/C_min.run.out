@@ -1,0 +1,20 @@
+3.5
+0.3
+true
+.build/C_min.js:1122
+        throw e
+        ^
+
+TypeError: a.isGreaterThanOrEqualTo is not a function
+    at $module.EuclideanDivision (.build/C_min.js:942:11)
+    at __default.Main (.build/C_min.js:1220:51)
+    at .build/C_min.js:1227:53
+    at $module.HandleHaltExceptions (.build/C_min.js:1116:7)
+    at Object.<anonymous> (.build/C_min.js:1227:8)
+    at Module._compile (node:internal/modules/cjs/loader:1854:14)
+    at Object..js (node:internal/modules/cjs/loader:1985:10)
+    at Module.load (node:internal/modules/cjs/loader:1577:32)
+    at Module._load (node:internal/modules/cjs/loader:1379:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+
+Node.js v24.17.0

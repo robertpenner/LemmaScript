@@ -1,0 +1,12 @@
+repro/R05_OrderIncoherence.dfy(9,0): Error: a postcondition could not be proved on this return path
+  |
+9 | {
+  | ^
+
+repro/R05_OrderIncoherence.dfy(8,33): Related location: this is the postcondition that could not be proved
+  |
+8 |   ensures a <= b && b <= a ==> a == b
+  |                                  ^^
+
+
+Dafny program verifier finished with 11 verified, 1 error

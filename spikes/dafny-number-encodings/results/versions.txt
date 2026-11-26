@@ -1,0 +1,22 @@
+date: 2026-11-19T18:37:55Z
+host: Darwin arm64, 10 logical cpus
+node: v24.17.0
+verification time limit: 30s
+seeds: 1 2 3
+sections: verify repro js vectors
+vectors: math-special-values.json sha256 bfe75ebf3c2fe06ca360284dec29035d91ea7680462ba6ce6431756becaffef1
+
+[pinned]
+binary: dafny/dafny
+dafny --version: 4.11.0+fcb2042d6d043a2634f0854338c08feeaaaf4ae2
+boogie (DafnyDriver.deps.json): Boogie.ExecutionEngine/3.5.5
+bundled z3: z3-4.12.1 z3-4.14.1 
+default prover (verify --boogie -trace): z3-4.12.1
+
+[nightly]
+binary: dafny/dafny
+dafny --version: 4.11.1+a8692441e735a865c378c76e87bcf7d0e6c7c592
+boogie (DafnyDriver.deps.json): Boogie.ExecutionEngine/3.5.5
+bundled z3: z3-4.12.1 z3-4.16.0 
+default prover (verify --boogie -trace): z3-4.16.0
+

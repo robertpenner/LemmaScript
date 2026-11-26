@@ -1,0 +1,7 @@
+repro/R02_Fp32E.dfy(12,2): Error: assertion could not be proved
+   |
+12 |   assert fp32.E as real == 2.71828174591064453125;
+   |   ^^^^^^
+
+
+Dafny program verifier finished with 4 verified, 1 error

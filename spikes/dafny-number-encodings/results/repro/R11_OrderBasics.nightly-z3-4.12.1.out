@@ -1,0 +1,12 @@
+repro/R11_OrderBasics.dfy(6,47): Error: Verification of 'Trichotomy' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+  |
+6 |   ensures !fp64.Less(x, y) ==> fp64.LessOrEqual(y, x)
+  |                                                ^
+
+repro/R11_OrderBasics.dfy(12,26): Error: Verification of 'Transitivity' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+12 |   ensures fp64.LessOrEqual(x, z)
+   |                           ^
+
+
+Dafny program verifier finished with 1 verified, 0 errors, 2 time outs

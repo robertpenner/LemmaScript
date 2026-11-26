@@ -1,0 +1,8 @@
+CLI: Warning: The file 'corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/C_signedzero.dfy(50,6): Error: Verification of 'NormKeyCollapses' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+50 | lemma NormKeyCollapses(x: fp64, y: fp64) // @target
+   |       ^^^^^^^^^^^^^^^^
+
+
+Dafny program verifier finished with 7 verified, 0 errors, 1 time out

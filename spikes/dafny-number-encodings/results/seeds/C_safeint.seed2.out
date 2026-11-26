@@ -1,0 +1,18 @@
+CLI: Warning: The file 'corpus/C_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/C_safeint.dfy(9,9): Error: Verification of 'Midpoint' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+  |
+9 | function Midpoint(lo: fp64, hi: fp64): (m: fp64)
+  |          ^^^^^^^^
+
+corpus/C_safeint.dfy(19,7): Error: Verification of 'BinarySearch' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+19 | method BinarySearch(a: seq<fp64>, key: fp64) returns (idx: int)
+   |        ^^^^^^^^^^^^
+
+corpus/C_safeint.dfy(60,7): Error: Verification of 'SumBounded' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+   |
+60 | method SumBounded(a: seq<fp64>, bound: fp64) returns (s: fp64)
+   |        ^^^^^^^^^^
+
+
+Dafny program verifier finished with 4 verified, 0 errors, 3 time outs

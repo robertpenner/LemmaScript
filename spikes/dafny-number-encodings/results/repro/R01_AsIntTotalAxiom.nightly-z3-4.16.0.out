@@ -1,0 +1,12 @@
+repro/R01_AsIntTotalAxiom.dfy(10,2): Error: assertion could not be proved
+   |
+10 |   assert (x as int) == 100000000000000000000;
+   |   ^^^^^^
+
+repro/R01_AsIntTotalAxiom.dfy(22,2): Error: assertion could not be proved
+   |
+22 |   assert fp64.ToInt(x) < 9223372036854775808;
+   |   ^^^^^^
+
+
+Dafny program verifier finished with 6 verified, 2 errors

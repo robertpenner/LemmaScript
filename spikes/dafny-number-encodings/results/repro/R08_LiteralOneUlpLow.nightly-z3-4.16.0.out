@@ -1,0 +1,7 @@
+repro/R08_LiteralOneUlpLow.dfy(13,2): Error: assertion could not be proved
+   |
+13 |   assert x == 0.000010000000000000000818030539140313095458623138256371021270751953125;
+   |   ^^^^^^
+
+
+Dafny program verifier finished with 1 verified, 1 error

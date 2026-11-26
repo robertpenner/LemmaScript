@@ -1,0 +1,9 @@
+CLI: Warning: The file 'corpus/A_lib.dfy' was passed to --library. Verification for that file might have used options incompatible with the current ones, or might have been skipped entirely. Use a .doo file to enable Dafny to check that compatible options were used
+corpus/A_safeint.dfy(75,11): Error: result of operation might violate newtype constraint for 'SafeInt'
+   |
+75 |     s := s + a[i];
+   |            ^
+
+
+Dafny program verifier finished with 96 verified, 1 error
+Results File: results/verify/A_safeint.csv

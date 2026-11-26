@@ -1,0 +1,47 @@
+repro/R14_FromRealLiteralIncomplete.dfy(7,60): Error: a postcondition could not be proved on this return path
+  |
+7 | lemma NegZero() ensures fp64.FromReal(0.0) == fp64.Neg(0.0) {}
+  |                                                             ^
+
+repro/R14_FromRealLiteralIncomplete.dfy(7,43): Related location: this is the postcondition that could not be proved
+  |
+7 | lemma NegZero() ensures fp64.FromReal(0.0) == fp64.Neg(0.0) {}
+  |                                            ^^
+
+repro/R14_FromRealLiteralIncomplete.dfy(8,42): Error: Verification of 'IsZero' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
+  |
+8 | lemma IsZero() ensures fp64.FromReal(0.0).IsZero {}
+  |                                           ^^^^^^
+
+repro/R14_FromRealLiteralIncomplete.dfy(9,59): Error: a postcondition could not be proved on this return path
+  |
+9 | lemma NotNegative() ensures !fp64.FromReal(0.0).IsNegative {}
+  |                                                            ^
+
+repro/R14_FromRealLiteralIncomplete.dfy(9,28): Related location: this is the postcondition that could not be proved
+  |
+9 | lemma NotNegative() ensures !fp64.FromReal(0.0).IsNegative {}
+  |                             ^
+
+repro/R14_FromRealLiteralIncomplete.dfy(10,46): Error: a postcondition could not be proved on this return path
+   |
+10 | lemma Pos() ensures fp64.FromReal(0.0) != 0.0 {}
+   |                                               ^
+
+repro/R14_FromRealLiteralIncomplete.dfy(10,39): Related location: this is the postcondition that could not be proved
+   |
+10 | lemma Pos() ensures fp64.FromReal(0.0) != 0.0 {}
+   |                                        ^^
+
+repro/R14_FromRealLiteralIncomplete.dfy(11,46): Error: a postcondition could not be proved on this return path
+   |
+11 | lemma One() ensures fp64.FromReal(1.0) == 1.0 {}
+   |                                               ^
+
+repro/R14_FromRealLiteralIncomplete.dfy(11,39): Related location: this is the postcondition that could not be proved
+   |
+11 | lemma One() ensures fp64.FromReal(1.0) == 1.0 {}
+   |                                        ^^
+
+
+Dafny program verifier finished with 1 verified, 4 errors, 1 time out

@@ -1,0 +1,40 @@
+Encountered internal compilation exception: Exception of type 'Cce+UnreachableException' was thrown.
+repro/R04a_ZeroWitnessless.dfy(6,5): Error: Internal error occurred during verification: Exception of type 'Cce+UnreachableException' was thrown.
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TranslateLiteralExpr(LiteralExpr literalExpr)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.<>c__DisplayClass74_0.<TranslateMemberSelectExpr>b__0(Field field)
+    at Microsoft.Dafny.MemberSelectExpr.MemberSelectCase[A](Func`2 fieldK, Func`2 functionK)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TranslateMemberSelectExpr(MemberSelectExpr selectExpr)
+    at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
+    at Microsoft.Dafny.BoogieGenerator.TrSplitExpr(BodyTranslationContext context, Expression expr, List`1 splits, Boolean position, Int32 heightLimit, Boolean applyInduction, ExpressionTranslator etran)
+    at Microsoft.Dafny.BoogieGenerator.TrSplitExpr(BodyTranslationContext context, Expression expr, List`1 splits, Boolean position, Int32 heightLimit, Boolean applyInduction, ExpressionTranslator etran)
+    at Microsoft.Dafny.BoogieGenerator.TrSplitExpr(BodyTranslationContext context, Expression expr, List`1 splits, Boolean position, Int32 heightLimit, Boolean applyInduction, ExpressionTranslator etran)
+    at Microsoft.Dafny.BoogieGenerator.TrSplitExpr(BodyTranslationContext context, Expression expr, ExpressionTranslator etran, Boolean applyInduction, Boolean& splitHappened)
+    at Microsoft.Dafny.BoogieGenerator.SplitAndAssertExpression(BoogieStmtListBuilder witnessCheckBuilder, Expression witnessExpr, ExpressionTranslator etran, BodyTranslationContext context, WitnessCheck desc)
+    at Microsoft.Dafny.BoogieGenerator.AddWellformednessCheck(RedirectingTypeDecl decl)
+    at Microsoft.Dafny.BoogieGenerator.AddTypeDecl(SubsetTypeDecl dd)
+    at Microsoft.Dafny.BoogieGenerator.AddRevealableTypeDecl(RevealableTypeDecl d)
+    at Microsoft.Dafny.BoogieGenerator.DoTranslation(Program p, ModuleDefinition forModule)
+    at Microsoft.Dafny.LanguageServer.Language.DafnyProgramVerifier.<>c__DisplayClass3_0.<GetVerificationTasksAsync>b__0()
+    at System.Threading.Tasks.Task`1.InnerInvoke()
+    at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+ --- End of stack trace from previous location ---
+    at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+    at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)
+ --- End of stack trace from previous location ---
+    at Microsoft.Dafny.LanguageServer.Language.DafnyProgramVerifier.GetVerificationTasksAsync(ExecutionEngine engine, ResolutionResult resolution, ModuleDefinition moduleDefinition, CancellationToken cancellationToken)
+    at Microsoft.Dafny.Compilation.<>c__DisplayClass60_0.<<VerifyUnverifiedSymbol>b__1>d.MoveNext()
+ --- End of stack trace from previous location ---
+    at Microsoft.Dafny.Compilation.VerifyUnverifiedSymbol(Boolean onlyPrepareVerificationForGutterTests, ICanVerify canVerify, ResolutionResult resolution, Func`2 taskFilter, Nullable`1 randomSeed)
+    at Microsoft.Dafny.Compilation.VerifyUnverifiedSymbol(Boolean onlyPrepareVerificationForGutterTests, ICanVerify canVerify, ResolutionResult resolution, Func`2 taskFilter, Nullable`1 randomSeed)
+    at DafnyDriver.Commands.CliCompilation.VerifyAllLazily(Nullable`1 randomSeed)+MoveNext()
+  |
+6 | type NonNaN = x: fp64 | !x.IsNaN
+  |      ^^^^^^
+
+Unhandled exception. Cce+UnreachableException: Exception of type 'Cce+UnreachableException' was thrown.
+   at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TranslateLiteralExpr(LiteralExpr literalExpr)
+   at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)
+   at Microsoft.Dafny.BoogieGenerator.ExpressionTranslator.TrExpr(Expression expr)

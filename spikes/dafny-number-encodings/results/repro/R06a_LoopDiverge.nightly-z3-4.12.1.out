@@ -1,0 +1,7 @@
+repro/R06a_LoopDiverge.dfy(12,2): Error: decreases expression could not be proved to decrease
+   |
+12 |   while true
+   |   ^^^^^
+
+
+Dafny program verifier finished with 4 verified, 1 error

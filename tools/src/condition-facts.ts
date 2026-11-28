@@ -24,12 +24,13 @@ import type { TExpr, TStmt, Ty } from "./typedir.js";
 import { isNullishStorageTy, optAbsent } from "./typedir.js";
 import { freshName, freshNameWhere, isUserName } from "./names.js";
 import type { TypeDecls } from "./typedecls.js";
-import { unionDeclOfTy, discriminantOf } from "./typedecls.js";
+import { unionDeclOfTy, discriminantOf, declOfDotted, tyBaseName } from "./typedecls.js";
 
 /** Explicit context: declarations, optChain counter, and scope-local binders. */
 export interface CondCtx {
   decls: TypeDecls;
   oc: { n: number };
+  typeParams?: ReadonlySet<string>;
   binders?: { names: Map<string, string>; used: Set<string> };
 }
 
@@ -105,8 +106,16 @@ export function bindPresentFact(f: PresentFact, ctx: CondCtx): PresentFact {
  *  `!e` and bare `e` are truthiness forms. `!!c` is the same check as `c`.
  *  Following TS, only pure access paths narrow; complex scrutinees return null. */
 export function presentFact(cond: TExpr): PresentFact | null {
-  if (cond.kind === "unop" && cond.op === "!" && cond.expr.kind === "unop" && cond.expr.op === "!")
-    return presentFact(cond.expr.expr);
+  if (cond.kind === "unop" && cond.op === "!") {
+    if (cond.expr.kind === "unop" && cond.expr.op === "!") return presentFact(cond.expr.expr);
+    // Negated explicit sentinel check: `!(x === undefined)`, `!(x !== undefined)`,
+    // `!(x === null)`, `!(x == null)`, etc. (#338). Non-truthiness facts invert
+    // cleanly by flipping `negated`.
+    const inner = presentFact(cond.expr);
+    if (inner && !inner.truthiness) {
+      return { ...inner, negated: !inner.negated };
+    }
+  }
   // `!e` where e is optional or nullish — a truthiness form: false iff e is
   // absent (None / Null / Undefined) OR its inner value is itself falsy.
   if (cond.kind === "unop" && cond.op === "!" && (cond.expr.ty.kind === "optional" || cond.expr.ty.kind === "nullish")) {
@@ -241,16 +250,49 @@ export function flattenOr(e: TExpr): TExpr[] {
  *  null otherwise). */
 export type NoneDetector = { scrutinee: TExpr; innerTy: Ty; binder: string; residual: TExpr | null };
 
+/** True when `e` cannot evaluate to `undefined` at runtime.
+ *  Rules out `undefined`, optional/nullish/void/unknown types, function type
+ *  parameters (which may be instantiated with `undefined`), and aliases to them,
+ *  while keeping concrete declared types (records, unions, enums, classes). */
+export function excludesUndefined(e: TExpr, decls: TypeDecls, typeParams?: ReadonlySet<string>): boolean {
+  if (e.kind === "var" && e.name === "undefined") return false;
+  return tyExcludesUndefined(e.ty, decls, typeParams);
+}
+
+function tyExcludesUndefined(ty: Ty, decls: TypeDecls, typeParams?: ReadonlySet<string>, depth = 0): boolean {
+  if (depth > 8) return false;
+  switch (ty.kind) {
+    case "optional":
+    case "nullish":
+    case "void":
+    case "unknown":
+      return false;
+    case "user": {
+      const base = tyBaseName(ty.name);
+      if (typeParams?.has(base)) return false;
+      const decl = declOfDotted(decls, base);
+      if (decl?.kind === "alias" && decl.aliasOfTy) {
+        return tyExcludesUndefined(decl.aliasOfTy, decls, typeParams, depth + 1);
+      }
+      return true;
+    }
+    default:
+      return true;
+  }
+}
+
 export function noneDetector(leaf: TExpr, ctx: CondCtx): NoneDetector | null {
-  // `x?.chain !== lit` — `undefined !== lit` is true when x is None.
+  // `x?.chain !== lit` — `undefined !== lit` is true when x is None, provided
+  // `lit` itself cannot evaluate to `undefined`.
   if (leaf.kind === "binop" && leaf.op === "!==") {
     const oc = leaf.left.kind === "optChain" ? leaf.left : leaf.right.kind === "optChain" ? leaf.right : null;
     if (oc && oc.kind === "optChain" && oc.obj.ty.kind === "optional" && !oc.obj.ty.fromNullish) {
+      const lit = leaf.left === oc ? leaf.right : leaf.left;
+      if (!excludesUndefined(lit, ctx.decls, ctx.typeParams)) return null;
       const binder = freshPathBinder(oc.obj, ctx);
       if (binder === null) return null;
       const unwrapped = applyChain({ kind: "var", name: binder, ty: oc.obj.ty.inner }, oc.chain);
       restoreDiscriminantFlag(unwrapped, ctx.decls);
-      const lit = leaf.left === oc ? leaf.right : leaf.left;
       return { scrutinee: oc.obj, innerTy: oc.obj.ty.inner, binder, residual: { kind: "binop", op: "!==", left: unwrapped, right: lit, ty: { kind: "bool" } } };
     }
   }

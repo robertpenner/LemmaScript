@@ -1,6 +1,6 @@
 # LemmaScript — Implementation Specification
 
-**Version:** 0.6.14
+**Version:** 0.6.15
 **Date:** November 2026
 
 Backend-specific details:
@@ -70,13 +70,12 @@ implies  := or ('==>' implies)?          // right-associative
 or       := and ('||' and)*
 and      := compare ('&&' compare)*
 compare  := add (cmpOp add)?
-cmpOp    := '===' | '!==' | '>=' | '<=' | '>' | '<'
+cmpOp    := '===' | '!==' | '==' | '!=' | '>=' | '<=' | '>' | '<' | 'in'
 add      := mul (('+' | '-') mul)*
 mul      := unary (('*' | '/' | '%') unary)*
 unary    := '!' unary | '-' unary | postfix
 postfix  := atom ('.' ident | '[' expr ']' | '(' args ')')*
-cmpOp    := ... | 'in'                        // set/seq/map membership
-atom     := NUMBER | BIGINT | STRING | IDENT | 'true' | 'false' | '\result'
+atom     := NUMBER | BIGINT | STRING | IDENT | 'true' | 'false' | 'null' | 'undefined' | '\result'
           | 'forall' '(' IDENT (':' TYPE)? ',' expr ')'
           | 'exists' '(' IDENT (':' TYPE)? ',' expr ')'
           | 'perm' '(' expr ',' expr ')'        // permutation predicate (spec-only; Dafny backend)
@@ -447,9 +446,14 @@ The translation is largely syntactic, but also type-driven: lowerings such as tr
 
 No normalization of operators. Both backends handle all comparison directions.
 
+**Strict vs. loose equality on nullable types:**
+- On non-nullable values, `==`/`!=` in specs behave identically to `===`/`!==`.
+- On `Option<T>` (`T | undefined` or `T | null`) and `Nullish<T>` (`T | null | undefined`), strict `===`/`!==` distinguishes `null` from `undefined` (for example, `null === undefined` is `false`, and comparing `x: T | undefined` with `=== null` is always `false`), while loose `== null`, `== undefined`, `!= null`, and `!= undefined` treat `null` and `undefined` as equivalent — both in TypeScript code and in `//@ ` specs.
+- When an executable optional or nullish comparison (`===`, `!==`, `<`, `<=`, `>`, `>=`) has a precondition-bearing non-nullable operand (calls, indexing, checked reads, `/`, `%`), `transform.ts` evaluates that operand into a `let _cmpN` binding before matching so its preconditions are checked even when the nullable side is absent. Spec clauses skip this hoisting.
+
 **Truthiness coercion:** `!expr` is translated based on the operand's type:
 - `string`: `!s` → `s == ""` (empty string is falsy)
-- `optional`: `!opt` → match on None (undefined is falsy)
+- `optional` / `nullish`: `!opt` → absent (`None` / `Null` / `Undefined`) negates to `true`; present values test falsiness of the inner payload (`0`, `""`, `false` are falsy; arrays/records/maps/sets are always truthy)
 - `bool`: `!b` → `¬b` (standard negation)
 - `array` / object (user type) / `map` / `set`: always truthy in JS, so `!x` → `false`
 
@@ -532,7 +536,7 @@ With `local`, `SeqFilter` and `SeqAll` replace the corresponding
 | `arr.sort()` (no comparator) | — | `SeqSort(arr)` (preamble axiom: permutation + length-preserving only — JS default order is type-dependent) |
 | `arr.slice(start)` | `arr.extract start arr.size` | `arr[start..]` |
 | `arr.slice(start, end)` | `arr.extract start end` | `arr[start..end]` |
-| `expr!` (non-null) | unwrap Option | unwrap Option / direct map access |
+| `expr!` (non-null) | unwrap Option or Nullish | unwrap Option or Nullish / direct map access |
 | `expr \|\| default` (on optional) | match Some/None | `match { Some(v) => v, None => default }` |
 | `expr \|\| undefined` (on optional) | identity | identity (no-op) |
 | `expr \|\| default` (on string) | if non-empty | `if \|expr\| > 0 then expr else default` |
@@ -742,21 +746,25 @@ enqueued.add(id);        // → Lean: enqueued := enqueued.insert id
 
 **`Map.get` returns `Option`** in code context (since the key may not exist). In spec context (annotations), `map.get(k)` emits direct access without an Option wrapper, matching how specs reason about map contents.
 
-**Optional narrowing.** All these patterns narrow the optional to its inner type in the appropriate scope:
+**Optional and nullish narrowing.** All these patterns narrow the nullable value to its narrower type in the appropriate scope:
 
-- Equality: `v !== undefined`, `v === undefined` (early return)
+- Strict equality: `v !== undefined`, `v === undefined`, `v !== null`, `v === null` (single-sentinel `Option<T>` narrows only on its own sentinel; `Nullish<T>` narrows in two steps — `nullish<T>` → `optional<T>` → `T`)
+- Loose nullish equality: `v != null`, `v == null`, `v != undefined`, `v == undefined` (narrows both `Option<T>` and `Nullish<T>` directly to `T`)
 - Truthiness: `if (v)`, `if (!v)`, `opt ? a : b`
 - Composition: `v && rest` or `rest && v` (optional check on either side) — in an `if`/`?:` condition or as a bare statement (`v !== undefined && v.f()`, the `if`-less guard idiom)
-- Disjunctive early return: `a === undefined || b === undefined`, `!x || x.f !== v`, `x?.t !== 'm' || x.g`
-- Spec implication: `path !== undefined && rest ==> B` (premise narrows conclusion)
-- Optional chaining: `obj?.field`, `obj?.foo()`, `obj?.[i]`, chained `obj?.a?.b?.c` and `obj?.a.b.c`
-- Nullish coalescing: `x ?? default`; array index `arr[i] ?? default` (undefined ⟺ out of bounds under `noUncheckedIndexedAccess`) → `(0 <= i && i < arr.length) ? arr[i] : default`
+- Disjunctive early return: `a === undefined || b === undefined`, `x === null || x === undefined`, `!x || x.f !== v`, `x?.t !== 'm' || x.g`
+- Loops and definite assignment: `while (cur !== undefined && ...)`, `if (v === undefined) { v = 6; }`, `v = 6;` (with control-flow narrowing invalidation across mutating `if`/`while`/`forof`/`switch`)
+- Spec implication: `path !== undefined && rest ==> B` and `x != null ==> B` (premise narrows conclusion)
+- Optional chaining: `obj?.field`, `obj?.foo()`, `obj?.[i]`, chained `obj?.a?.b?.c` and `obj?.a.b.c` (short-circuiting always produces `undefined`; `opt?.nullableField` where `nullableField: T | null` yields `Nullish<T>`)
+- Nullish coalescing: `x ?? default` (works on `Option<T>`, `Nullish<T>`, and non-nullable operands; uses the fallback only for `null` or `undefined`, preserving `0`, `false`, and `""`); array index `arr[i] ?? default` (undefined ⟺ out of bounds under `noUncheckedIndexedAccess`) → `(0 <= i && i < arr.length) ? arr[i] : default`
 
-The narrow pass (`narrow.ts`) detects these on the typed IR and rewrites them into a single `someMatch` IR node with a fresh binder. Transform lowers `someMatch` into Dafny `match` Some/None (or `if .Some? { ... .value ... }` after the peephole pass).
+Safe `Option<T>` patterns rewrite in `narrow.ts` into a single `someMatch` IR node with a fresh binder (lowered to Dafny `match` Some/None or Lean `if h : x.isSome = true`). Patterns that bypass or outlive `someMatch` — `Nullish<T>`, `while` conditions, definite assignment, `||` chains, or branches that may reassign the narrowed path — stay as explicit guards and use `checked-reads.ts` to wrap unwrapped reads in `checkedUnwrap` (Dafny `.value`; Lean `(x).get (by grind)` with non-shadowing dependent `if _hN :` / `∀ (_hN : ...)`). See [ARCHITECTURE_NARROWING.md](ARCHITECTURE_NARROWING.md).
+
+**In-place mutation write-back and live-alias rejection.** In-place updates (`arr.push`, `arr[i] = v`, `arr.pop`, `arr.shift`, `m.set`, `s.add`, dotted field assignments) on a narrowed optional binding write back through the enclosing `Place` unwrap frames (`places.ts`, `place-lowering.ts`) so storage and binder stay in sync; imperative union arms match with wildcards and mutate live storage directly. Because Dafny and Lean model arrays, maps, sets, and records as immutable values, `alias-check-pass.ts` rejects mutating a container through a live alias (`const b = a; b.push(1); return a.length;`) with a compile error while allowing read-only sharing, dead-source moves, and explicit clones (`[...a]`, `a.slice()`, `{ ...obj }`).
 
 Following TS, the equality/truthiness/`&&`/`||`/`==>` patterns fire only for pure access paths (`x`, `obj.field`, `a.b.c.d`); method-call results must be bound first (`const v = m.get(k); if (v !== undefined) ...`). The `obj?.<chain>` and `x ?? d` forms are exceptions: extract emits dedicated single-evaluation IR nodes (`optChain`, `nullish`), so any expression on the left is allowed.
 
-**Discriminated-union narrowing.** `if (e.kind === "lit") use(e.val)`, `if ('field' in x) use(x.field)`, and `if (x.kind !== "v") return; rest` all lower to `match` constructs that destructure variant-specific fields. Switch on a discriminator works similarly. Detection lives in `narrow.ts` alongside optional-narrowing rules (rewrites to a `tagMatch` IR node); the lowering to backend `match` lives in `transform.ts`.
+**Discriminated-union narrowing.** `if (e.kind === "lit") use(e.val)`, `if ('field' in x) use(x.field)`, and `if (x.kind !== "v") return; rest` all lower to `match` constructs (destructuring variant fields in pure functions; wildcard-matching and reading/updating live storage directly in imperative methods so scrutinee reassignment stays sound). Switch on a discriminator works similarly. Detection lives in `narrow.ts` alongside optional-narrowing rules (rewrites to a `tagMatch` IR node); the lowering to backend `match` lives in `transform.ts`.
 
 **Synthesized array-union narrowing.** A plain union `U | T[]` (no shared discriminant) is synthesized at the boundary into a tagged datatype `ArrayBranch(arr: T[]) | NonArrayBranch(val: U)`. `Array.isArray(x)` narrows to the array branch (in `if` / `?:` / `==>`); when the non-array branch `U` is `string`, `typeof x === "string"` narrows to it in `?:` conditionals — the dual discriminator. Inside the matched branch, bare references to `x` use the variant's payload. The `typeof` form fires only when `U` is actually `string`; for any other `U` the runtime `"string"` test can't match that branch, so `lsc` does not narrow (and `typeof` stays unsupported).
 
@@ -965,14 +973,16 @@ function route(outcome: Outcome): number {
 }
 ```
 
-Dafny and Lean records are nominal, so the `rpc-error` arm lowers the call by
-constructing `RpcErrorView` from that arm's match-bound `code`, `message`, and
-`data` fields. The rule is deliberately narrower than general TypeScript
-structural subtyping: the argument must be the arm's scrutinee variable, the
+Dafny and Lean records are nominal, so `resolve.ts` lowers the call by
+constructing `RpcErrorView` from the narrowed variant's `code`, `message`, and
+`data` fields (referencing live fields in imperative methods and match binders
+in pure functions). The rule is deliberately narrower than general TypeScript
+structural subtyping: the argument must be a flow-narrowed union path, the
 callee must have resolved parameter types, the target must be a named record,
-and every target field must exist in the arm with the same resolved type. Extra
-arm fields (notably the discriminant) are ignored. The rule applies to pure and
-method bodies; arbitrary structural assignments and casts are not synthesized.
+and every target field must exist on the narrowed variant with the same resolved
+type. Extra variant fields (notably the discriminant) are ignored. The rule
+applies to pure and method bodies; arbitrary structural assignments and casts
+are not synthesized.
 
 **Switch fall-through:** a non-empty `case` must end in `break`/`return`/`throw` — C-style fall-through into the next case's body is rejected. Empty `case A: case B: body` stacking (leading labels sharing the next body) is supported.
 
@@ -1055,6 +1065,8 @@ Dafny then verifies that the `by method` block computes `tagNameExists_fun_spec`
 | `Map<K, V>` | `Std.HashMap K' V'` | `map<K', V'>` |
 | `Set<T>` | `Std.HashSet T'` | `set<T'>` |
 | `T \| undefined` | `Option T'` | `Option<T'>` |
+| `T \| null` | `Option T'` | `Option<T'>` (tracks `null` as its absent sentinel) |
+| `T \| null \| undefined` (or `x?: T \| null`) | `Nullish T'` | `Nullish<T'>` (emitted on demand; see [`examples/nullish.ts`](examples/nullish.ts)) |
 | `true \| false \| undefined` | `Option Bool` | `Option<bool>` |
 | `Record<K, V>` | `Std.HashMap K' V'` | `map<K', V'>` |
 | `(a: T1, b: T2) => R` (function type) | — | `(T1, T2) -> R` (typically used in a `type Foo = (...) => R` alias; lambda params passed to a callee with a `Foo`-typed parameter get inferred types) |
@@ -1065,6 +1077,8 @@ Dafny then verifies that the `by method` block computes `tagNameExists_fun_spec`
 | `<T>` / `<T extends U>` (unbounded, or union/intersection bound) | `T` kept as type param (bound dropped) | `T` kept as type param (bound dropped) |
 | `A \| B` (union param) | field intersection type | field intersection type |
 | Anything else | Pass through | Pass through |
+
+**Option and Nullish.** In both backends, `None` means `undefined` for `T | undefined`, or `null` for `T | null`; widening from `Option` to `Nullish` preserves which sentinel `None` represents. Nested and aliased unions containing both `null` and `undefined` also use `Nullish`.
 
 For the Dafny backend, `string` uses Unicode-scalar semantics by default.
 To use JavaScript's UTF-16 code-unit model, select
@@ -1297,9 +1311,9 @@ return { res: true, done: true, rec: true };
 
 **Anonymous return types:** Functions returning inline object types (e.g., `(): { modules: Module[]; claims: Claim[] }`) get a synthetic return type (e.g., `ParseSpecYamlResult`). Named type aliases (e.g., `type Foo = { ... }`) are resolved by their alias name instead.
 
-**Record constructor padding (Dafny):** When an object literal has fewer fields than the target datatype (e.g., TS code omits optional fields), missing optional fields are filled with `None`. The emitter matches provided fields by name against the datatype declaration.
+**Record constructor padding (Dafny):** When an object literal has fewer fields than the target datatype (e.g., TS code omits optional fields), missing optional fields are filled with `None` for `Option` or `Nullish.Undefined` for `Nullish`. The emitter matches provided fields by name against the datatype declaration.
 
-**Optional field coercion:** When a non-optional value is assigned to an optional field in a record constructor (e.g., `createdAt: now` where `now: int` and the field type is `Option<int>`), the resolve phase wraps the value in `Some`. The coercion only fires when the value has a concrete non-optional type — `unknown` and `void` values are left as-is.
+**Optional field coercion:** When a concrete non-optional value is assigned to an `Option<T>` field in a record constructor (e.g., `createdAt: now` where `now: int`), resolve wraps it in `Some`; `unknown` and `void` values are left as-is. A `Nullish<T>` field instead wraps present values in `Value` and preserves `Null`/`Undefined` separately.
 
 ### 6.5 Type Mapping Implementation
 
@@ -1457,6 +1471,7 @@ it; absent means current behavior. Unknown keys and bad values are errors.
 | `extern-default` | `pure` \| `impure` | `pure` | yes |
 | `safe-slice` | boolean | `false` | yes |
 | `proof-dir` | relative path | source directory | no (Dafny only) |
+| `proof-files` | source path → array of `.dfy` paths, relative to the config | `{}` | no (Dafny only) |
 | `string-semantics` | `unicode-scalar` \| `javascript-utf16` | `unicode-scalar` | yes (Dafny only) |
 | `dafny-library` | `stdlib` \| `local` | `stdlib` | yes (Dafny only) |
 | `run-log` | boolean | `true` | no (Dafny only) |
@@ -1500,8 +1515,10 @@ the source's git root, else the current directory), and stores the source as
 `.lemmascript/blobs/<hash>.ts`. The directory contains a
 `.gitignore` of `*`, so it never appears in `git status`. A record names the file, the command,
 the stage where the run stopped (`ok`, `verify`, `resolve`, `diff`, `conflict`), the members that
-passed and failed, hashes of the `.ts` and `.dfy`, and `partial: true` when the run did not
-report on every member. Logging never changes `lsc` output or exit codes.
+passed and failed, hashes of the `.ts` and Dafny proof inputs, and `partial: true` when the run
+did not report on every member. `dfyHash` covers the main `.dfy` plus the normalized relative
+paths and contents of its registered `proof-files`, independent of registration order; without
+extra files it retains the original single-file hash. Logging never changes `lsc` output or exit codes.
 
 ```json
 { "run-log": false }
@@ -1515,8 +1532,8 @@ turns it off for a project; `LSC_RUN_LOG=false` turns it off for one run.
 and reports **catches**: failures that a later run fixed, one per TypeScript function (a function
 fails while it or its `_ensures` lemma fails, and is fixed when both pass; lsc's generated helpers
 are left out). Each catch compares its
-first failing run with its passing run: a changed `.ts` is a `source-fix`, a changed `.dfy` alone
-is `proof`, and no change is `flaky`. A `source-fix` also carries the diff of the two `.ts`
+first failing run with its passing run: a changed `.ts` is a `source-fix`, a change to only the
+Dafny proof inputs is `proof`, and no change is `flaky`. A `source-fix` also carries the diff of the two `.ts`
 snapshots and a hint: `code` or `spec` (`requires`/`ensures`/`contract` lines) changed, both
 (`mixed`), or only proof scaffolding (`proof`). Failures still failing are listed as open; failures
 whose function disappeared are dropped. A member absent from a partial run is never dropped.
@@ -1530,10 +1547,10 @@ the diff evidence. The diff needs `git`: without it, or without a snapshot, the 
 
 ## 8. Pipeline
 
-Six-phase pipeline:
+Seven-phase pipeline:
 
 ```
-extract → resolve → narrow → transform → peephole → emit
+extract → resolve → narrow (+ checked-reads) → alias-check → transform → peephole → emit
 ```
 
 Each phase (and the three intermediate representations — Raw IR, Typed IR, IR) is documented in [TOOLS.md](TOOLS.md#pipeline).

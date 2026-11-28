@@ -8,13 +8,14 @@
 import type { RawExpr, RawStmt, RawFunction, RawModule } from "./rawir.js";
 import type { Ty, TExpr, TStmt, TFunction, TModule, TParam, CallKind } from "./typedir.js";
 import { isBigInt, optAbsent, tyEqual, isTerminatorKind } from "./typedir.js";
-import { parseTsType, tyToCanonical } from "./types.js";
+import { tyToCanonical } from "./types.js";
+import { parseSpecType } from "./spec-type.js";
 import type { TypeDeclInfo } from "./types.js";
 import { parseExpr } from "./specparser.js";
 import { freshName } from "./names.js";
 import { recognizeBuiltin, builtinSpec, callbackArgumentTypes, callbackBaseArity } from "./builtins.js";
-import { declOf, declOfKind, declOfDotted, declOfTy, tyBaseName } from "./typedecls.js";
-import { presentFact, variantFact } from "./condition-facts.js";
+import { declOf, declOfKind, declOfDotted, declOfTy, tyBaseName, remainingVariant } from "./typedecls.js";
+import { presentFact, variantFact, isArrayFact, typeofStringFact, excludesUndefined } from "./condition-facts.js";
 
 // ── Environment ──────────────────────────────────────────────
 
@@ -84,6 +85,7 @@ interface AccessPath {
 
 function asRawAccessPath(e: RawExpr): AccessPath | null {
   if (e.kind === "var") return { rootVar: e.name, fields: [] };
+  if (e.kind === "result") return { rootVar: "\\result", fields: [] };
   if (e.kind === "field") {
     const inner = asRawAccessPath(e.obj);
     if (!inner) return null;
@@ -126,6 +128,7 @@ interface ExternSignature {
 interface Ctx {
   env: Env | null;
   typeDecls: TypeDeclInfo[];
+  typeParams: ReadonlySet<string>;  // function/extern generic type parameter names in scope
   overrides: Map<string, string>;
   allowResult: boolean;
   returnTy: Ty;
@@ -146,12 +149,12 @@ function withEnv(ctx: Ctx, env: Env | null): Ctx {
 
 // ── TS type → Ty ─────────────────────────────────────────────
 
-function resolveTsType(tsType: string, overrides: Map<string, string>, varName?: string): Ty {
+function resolveRawType(ty: Ty | undefined, tsType: string, overrides: Map<string, string>, varName?: string): Ty {
   if (varName) {
     const o = overrides.get(varName);
-    if (o) return parseTsType(o);
+    if (o) return parseSpecType(o);
   }
-  return parseTsType(tsType);
+  return ty ?? parseSpecType(tsType);
 }
 
 /** Infer a conditional's result type after its branches have been resolved or
@@ -330,11 +333,11 @@ function negatedVarPresence(cond: TExpr): { varName: string; innerTy: Ty } | nul
  *  (x === undefined || y === undefined). */
 /** Extract field-path or optional-chain narrowings guaranteed after an early
  *  return (`if (d.b === undefined) return;` or `if (b?.tag !== 1) return;`, #354). */
-function collectEarlyReturnPathNarrowings(cond: TExpr): NarrowedPath[] {
+function collectEarlyReturnPathNarrowings(cond: TExpr, ctx: Ctx): NarrowedPath[] {
   if (cond.kind === "binop" && cond.op === "||") {
     return [
-      ...collectEarlyReturnPathNarrowings(cond.left),
-      ...collectEarlyReturnPathNarrowings(cond.right),
+      ...collectEarlyReturnPathNarrowings(cond.left, ctx),
+      ...collectEarlyReturnPathNarrowings(cond.right, ctx),
     ];
   }
   // Negated field-path presence: `d.b === undefined` or `!d.b`
@@ -352,8 +355,7 @@ function collectEarlyReturnPathNarrowings(cond: TExpr): NarrowedPath[] {
       : cond.right.kind === "optChain"
         ? [cond.right, cond.left]
         : [null, null];
-    if (ocSide && otherSide && !(otherSide.kind === "var" && otherSide.name === "undefined") &&
-        otherSide.ty.kind !== "optional" && otherSide.ty.kind !== "void" &&
+    if (ocSide && otherSide && excludesUndefined(otherSide, ctx.typeDecls, ctx.typeParams) &&
         ocSide.obj.ty.kind === "optional") {
       const path = asTExprAccessPath(ocSide.obj);
       if (path) return [{ path, narrowedTy: ocSide.obj.ty.inner }];
@@ -387,16 +389,116 @@ function collectEarlyReturnNarrowings(cond: TExpr): { varName: string; innerTy: 
   return n ? [n] : [];
 }
 
-/** Negated discriminant check (`path.kind !== "lit"`) on a var or field path.
- *  After `if (path.kind !== "lit") return`, the rest of the block knows the
- *  path is that variant. */
-function negatedVariantCheck(cond: TExpr): NarrowedPath | null {
-  if (cond.kind === "binop" && cond.op === "!==" && cond.right.kind === "str" &&
-      cond.left.kind === "field" && cond.left.isDiscriminant && cond.left.obj.ty.kind === "user") {
-    const path = asTExprAccessPath(cond.left.obj);
-    if (path) return { path, narrowedTy: cond.left.obj.ty, variant: cond.right.value };
+/** Return the payload type of `variant` on a synth array-union (`__isArray__`),
+ *  or null for non-synth types. */
+function synthVariantPayloadTy(ty: Ty, variant: string, ctx: Ctx): Ty | null {
+  if (ty.kind !== "user") return null;
+  const decl = findSynthArrayUnion(ty.name, ctx.typeDecls);
+  const f = decl?.variants?.find(v => v.name === variant)?.fields[0];
+  return f ? (f.type ?? parseSpecType(f.tsType)) : null;
+}
+
+/** Narrow a pure access path to a union variant in `ctx`. For synth array-unions
+ *  (`__isArray__`), also narrows the path's flow type to the branch's payload
+ *  type so array/string methods and checked projections fire uniformly. */
+function applyVariantNarrowing(ctx: Ctx, path: AccessPath, unionTy: Ty, variant: string): Ctx {
+  const payload = synthVariantPayloadTy(unionTy, variant, ctx);
+  if (payload) {
+    const nextPaths = [...ctx.narrowedPaths, { path, narrowedTy: payload, variant }];
+    if (path.fields.length === 0) {
+      return { ...withEnv(ctx, refine(ctx.env, path.rootVar, payload)), narrowedPaths: nextPaths };
+    }
+    return { ...ctx, narrowedPaths: nextPaths };
+  }
+  return { ...ctx, narrowedPaths: [...ctx.narrowedPaths, { path, narrowedTy: unionTy, variant }] };
+}
+
+/** Synth array-union branch guaranteed by `Array.isArray(path)`, `!Array.isArray(path)`,
+ *  or `typeof path === "string"` when `cond` evaluates to `truth`. */
+function synthVariantWhen(
+  cond: TExpr,
+  truth: boolean,
+  ctx: Ctx,
+): { path: AccessPath; unionTy: Ty; variant: "ArrayBranch" | "NonArrayBranch" } | null {
+  if (cond.kind === "unop" && cond.op === "!") return synthVariantWhen(cond.expr, !truth, ctx);
+  const condCtx = { decls: ctx.typeDecls, oc: { n: 0 } };
+  const arr = isArrayFact(cond, condCtx);
+  if (arr) {
+    const path = asTExprAccessPath(arr.scrutinee);
+    if (!path) return null;
+    return { path, unionTy: arr.scrutinee.ty, variant: truth ? "ArrayBranch" : "NonArrayBranch" };
+  }
+  const tof = typeofStringFact(cond, condCtx);
+  if (tof) {
+    const path = asTExprAccessPath(tof.scrutinee);
+    if (!path) return null;
+    return { path, unionTy: tof.scrutinee.ty, variant: truth ? "NonArrayBranch" : "ArrayBranch" };
   }
   return null;
+}
+
+/** Innermost narrowed union variant recorded for `path` in `ctx.narrowedPaths`. */
+function lookupNarrowedVariant(path: AccessPath, ctx: Ctx): string | undefined {
+  for (let i = ctx.narrowedPaths.length - 1; i >= 0; i--) {
+    const cand = ctx.narrowedPaths[i]!;
+    if (cand.variant && accessPathsEqual(cand.path, path)) return cand.variant;
+  }
+  return undefined;
+}
+
+/** Project narrowed union arguments to nominal records expected by a callee
+ *  (`helper(sh)` → `helper({ n: sh.n })`), using `ctx.narrowedPaths` so it works
+ *  uniformly on live storage and after reassignment. */
+function projectStructuralCallArgs(args: TExpr[], paramTypes: Ty[], ctx: Ctx): TExpr[] {
+  return args.map((arg, i) => {
+    if (i >= paramTypes.length || arg.ty.kind !== "user") return arg;
+    const targetTy = paramTypes[i];
+    if (targetTy.kind !== "user") return arg;
+    const targetDecl = declOfKind(ctx.typeDecls, targetTy.name, "record");
+    if (!targetDecl?.fields) return arg;
+    const argPath = asTExprAccessPath(arg);
+    if (!argPath) return arg;
+    const variantName = lookupNarrowedVariant(argPath, ctx);
+    if (!variantName) return arg;
+    const unionDecl = declOfKind(ctx.typeDecls, tyBaseName(arg.ty.name), "discriminated-union");
+    const variant = unionDecl?.variants?.find(v => v.name === variantName);
+    if (!variant) return arg;
+    const matched: { targetName: string; sourceName: string; ty: Ty }[] = [];
+    for (const tf of targetDecl.fields) {
+      const sf = variant.fields.find(f => f.name === tf.name);
+      const tfTy = tf.type ?? parseSpecType(tf.tsType);
+      const sfTy = sf ? (sf.type ?? parseSpecType(sf.tsType)) : undefined;
+      if (!sf || !sfTy || !tyEqual(sfTy, tfTy)) return arg;
+      matched.push({ targetName: tf.name, sourceName: sf.name, ty: sfTy });
+    }
+    return {
+      kind: "record" as const,
+      spread: null,
+      fields: matched.map(m => ({
+        name: m.targetName,
+        value: { kind: "field" as const, obj: arg, field: m.sourceName, ty: m.ty, ofVariant: variantName },
+      })),
+      ty: targetTy,
+    };
+  });
+}
+
+/** Variant guaranteed by a discriminant comparison (`path.kind === "lit"` or
+ *  `!== "lit"`, either operand order, with optional `!`) when `cond` evaluates
+ *  to `truth`. Exclusions narrow only when exactly one union variant remains. */
+function discriminantVariantWhen(cond: TExpr, truth: boolean, ctx: Ctx): NarrowedPath | null {
+  if (cond.kind === "unop" && cond.op === "!") return discriminantVariantWhen(cond.expr, !truth, ctx);
+  if (cond.kind !== "binop" || (cond.op !== "===" && cond.op !== "!==")) return null;
+  const field = cond.left.kind === "field" ? cond.left : cond.right.kind === "field" ? cond.right : null;
+  const label = cond.left.kind === "str" ? cond.left : cond.right.kind === "str" ? cond.right : null;
+  if (!field?.isDiscriminant || !label || field.obj.ty.kind !== "user") return null;
+  const path = asTExprAccessPath(field.obj);
+  if (!path) return null;
+  const matches = truth === (cond.op === "===");
+  if (matches) return { path, narrowedTy: field.obj.ty, variant: label.value };
+  const decl = findDecl(ctx, tyBaseName(field.obj.ty.name));
+  const rem = decl?.discriminant === field.field ? remainingVariant(decl, [label.value]) : undefined;
+  return rem ? { path, narrowedTy: field.obj.ty, variant: rem.name } : null;
 }
 
 /** TExpr → AccessPath. Counterpart to `asRawAccessPath` for resolved trees.
@@ -475,13 +577,22 @@ function collectAndChainNarrowings(cond: TExpr, ctx: Ctx): Ctx {
     }
     return ctx;
   }
-  // Positive discriminant check (`x.kind === "bool"`): record the variant so
-  // field reads on the path resolve against that variant's field types.
+  // Positive discriminant check (`x.kind === "bool"`, `"bool" === x.kind`, or
+  // `x.kind !== "other"` on a 2-variant union): record the variant so field
+  // reads on the path resolve against that variant's field types.
+  const dv = discriminantVariantWhen(cond, true, ctx);
+  if (dv) {
+    return { ...ctx, narrowedPaths: [...ctx.narrowedPaths, dv] };
+  }
+  const sv = synthVariantWhen(cond, true, ctx);
+  if (sv) {
+    return applyVariantNarrowing(ctx, sv.path, sv.unionTy, sv.variant);
+  }
   const vf = variantFact(cond, { decls: ctx.typeDecls, oc: { n: 0 } });
   if (vf) {
     const path = asTExprAccessPath(vf.scrutinee);
     if (path) {
-      return { ...ctx, narrowedPaths: [...ctx.narrowedPaths, { path, narrowedTy: vf.scrutinee.ty, variant: vf.variant }] };
+      return applyVariantNarrowing(ctx, path, vf.scrutinee.ty, vf.variant);
     }
   }
   return ctx;
@@ -505,6 +616,14 @@ function collectOrChainNarrowings(cond: TExpr, ctx: Ctx): Ctx {
     if (path) {
       return { ...ctx, narrowedPaths: [...ctx.narrowedPaths, { path, narrowedTy: f.innerTy }] };
     }
+  }
+  const dv = discriminantVariantWhen(cond, false, ctx);
+  if (dv) {
+    return { ...ctx, narrowedPaths: [...ctx.narrowedPaths, dv] };
+  }
+  const sv = synthVariantWhen(cond, false, ctx);
+  if (sv) {
+    return applyVariantNarrowing(ctx, sv.path, sv.unionTy, sv.variant);
   }
   return ctx;
 }
@@ -734,20 +853,9 @@ function classifyCall(fn: RawExpr, ctx: Ctx): CallKind {
 
 // ── Call resolution helpers ─────────────────────────────────
 
-/** Render a resolved type back to a TS type string, for lambda param inference. */
-function tyToTsStr(ty: Ty): string | undefined {
-  if (ty.kind === "user") return ty.name;
-  if (ty.kind === "string") return "string";
-  if (ty.kind === "int" || ty.kind === "nat") return "number";
-  if (ty.kind === "bool") return "boolean";
-  // Optional element (e.g. a `.filter` over a `T | undefined`-typed map result):
-  // type the callback param so its `x !== undefined` check narrows correctly.
-  if (ty.kind === "optional") { const inner = tyToTsStr(ty.inner); return inner ? `${inner} | undefined` : undefined; }
-  return undefined;
-}
 /** Infer lambda param types from function-typed parameters of named callees
- *  (e.g., a `Comparator = (a, b) => bool` parameter propagates `string, string` to the lambda's
- *  inline params). Returns updated rawArgs with inferred tsType. */
+ *  (e.g., a `Comparator = (a, b) => bool` parameter propagates structured `Ty`
+ *  directly to the lambda's inline params without string round-tripping). */
 function inferLambdaParamTypes(fn: TExpr, rawArgs: RawExpr[], ctx?: Ctx): RawExpr[] {
   // Named-callee propagation: when an argument position expects a function
   // type, infer the lambda's param types from that function type. Aliases
@@ -760,11 +868,11 @@ function inferLambdaParamTypes(fn: TExpr, rawArgs: RawExpr[], ctx?: Ctx): RawExp
       if (pTy.kind === "user") {
         const decl = declOf(ctx.typeDecls, (pTy as any).name);
         if (decl?.kind === "alias" && decl.aliasOfTy) pTy = decl.aliasOfTy;
-        else if (decl?.kind === "alias" && decl.aliasOf) pTy = parseTsType(decl.aliasOf);
+        else if (decl?.kind === "alias" && decl.aliasOf) pTy = parseSpecType(decl.aliasOf);
       }
       if (pTy.kind !== "fn") return a;
       const updatedParams = a.params.map((p, idx) =>
-        p.tsType || idx >= pTy.params.length ? p : { ...p, tsType: tyToTsStr(pTy.params[idx]) });
+        p.type || p.tsType || idx >= pTy.params.length ? p : { ...p, type: pTy.params[idx] });
       return { ...a, params: updatedParams };
     });
   }
@@ -799,7 +907,7 @@ function resolveCallback(e: Extract<RawExpr, { kind: "lambda" }>, actual: Ty[], 
     const p = e.params[i];
     return {
       name: p && !p.rest && !(p.defaultValue && defaults[i] === "missing") ? p.name : freshName(`_callbackArg${id}_${i}`),
-      ty: p && !p.rest && p.tsType ? parseTsType(p.tsType)
+      ty: p && !p.rest && (p.type || p.tsType) ? (p.type ?? parseSpecType(p.tsType!))
         : ty.kind === "nat" ? { ...ty, kind: "int" as const } : ty,
     };
   });
@@ -821,7 +929,10 @@ function resolveCallback(e: Extract<RawExpr, { kind: "lambda" }>, actual: Ty[], 
   let env = ctx.env;
   const frames = e.params.map((p, i): Env => {
     const paramTy: Ty = executesDefault(i)
-      ? expandAlias(parseTsType(p.inferredTsType ?? p.tsType ?? "unknown"), ctx.typeDecls)
+      ? expandAlias(
+          p.inferredType ?? p.type ?? (p.inferredTsType ?? p.tsType ? parseSpecType((p.inferredTsType ?? p.tsType)!) : { kind: "unknown" }),
+          ctx.typeDecls,
+        )
       : p.rest ? { kind: "unknown" } : slots[i]?.ty ?? { kind: "void" };
     const frame: Env = {
       name: p.name, parent: env,
@@ -907,13 +1018,13 @@ function resolveCallback(e: Extract<RawExpr, { kind: "lambda" }>, actual: Ty[], 
   // Hygienic names make unsupported scope references backend errors, rather
   // than silently capturing an unrelated outer binding. No source call moves.
   for (const [i, p] of pending) emit(i, p.init);
-  const returnTy: Ty = e.returnTsType ? parseTsType(e.returnTsType) : { kind: "unknown" };
+  const returnTy: Ty = e.returnTy ?? (e.returnTsType ? parseSpecType(e.returnTsType) : { kind: "unknown" });
   const lambdaCtx = { ...ctx, env, inLambda: true, returnTy };
   const body = [...prefix, ...(Array.isArray(e.body) ? resolveBlock(e.body, lambdaCtx)
     : [{ kind: "return" as const, value: resolveExpr(e.body, lambdaCtx) }])];
   const arity = Math.max(baseArity, used.lastIndexOf(true) + 1);
   const params = slots.slice(0, arity);
-  const ty: Ty = e.returnTsType ? { kind: "fn", params: params.map(p => p.ty), result: returnTy } : { kind: "unknown" };
+  const ty: Ty = (e.returnTy || e.returnTsType) ? { kind: "fn", params: params.map(p => p.ty), result: returnTy } : { kind: "unknown" };
   return { kind: "lambda", params, body, ty };
 }
 
@@ -1057,10 +1168,13 @@ function lookupFieldTy(objTy: Ty, field: string, ctx: Ctx): { ty: Ty; isDiscrimi
       if (f) return { ty: f.type!, isDiscriminant };
     }
     if (decl?.kind === "discriminated-union" && decl.variants) {
-      for (const variant of decl.variants) {
-        const f = variant.fields.find(f => f.name === field);
-        if (f) return { ty: f.type!, isDiscriminant };
+      const matches = decl.variants
+        .map(v => v.fields.find(f => f.name === field)?.type)
+        .filter((t): t is Ty => t !== undefined);
+      if (matches.length > 0 && matches.every(t => tyEqual(t, matches[0]))) {
+        return { ty: matches[0], isDiscriminant };
       }
+      return { ty: { kind: "unknown" }, isDiscriminant };
     }
     return { ty: { kind: "unknown" }, isDiscriminant };
   }
@@ -1285,6 +1399,10 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
         if (!ctx.inSpec && refEqHazard(left.ty, ctx.typeDecls) && refEqHazard(right.ty, ctx.typeDecls)) {
           warnRefEq(e.op, left.ty, right.ty);
         }
+      } else if (e.op === "in") {
+        const keySlot = right.ty.kind === "map" ? right.ty.key
+          : (right.ty.kind === "set" || right.ty.kind === "array") ? right.ty.elem : null;
+        if (keySlot) left = coerceToTargetTy(left, keySlot, ctx.typeDecls);
       }
       let ty: Ty = { kind: "unknown" };
       // <==> is bool like the comparisons; unlike ==>, neither side narrows
@@ -1321,7 +1439,13 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
     }
 
     case "unop": {
-      const expr = resolveExpr(e.expr, ctx);
+      let expr = resolveExpr(e.expr, ctx);
+      if (e.op === "typeof" && expr.kind === "var") {
+        const storage = storageLookup(ctx.env, expr.name);
+        if (storage?.kind === "user" && findSynthArrayUnion(storage.name, ctx.typeDecls)) {
+          expr = { ...expr, ty: storage };
+        }
+      }
       const ty: Ty = e.op === "!" ? { kind: "bool" } : e.op === "typeof" ? { kind: "string" }
         : e.op === "-" && expr.ty.kind === "nat" ? { ...expr.ty, kind: "int" } : expr.ty;
       return { kind: "unop", op: e.op, expr, ty };
@@ -1375,7 +1499,7 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
             throw new Error(`impure extern ${qualified} cannot be called from a specification`);
           if (ext.impure && ctx.inLambda)
             throw new Error(`impure extern ${qualified} cannot be called from a lambda`);
-          const args = e.args.map(a => resolveExpr(a, ctx));
+          const args = projectStructuralCallArgs(e.args.map(a => resolveExpr(a, ctx)), ext.params, ctx);
           const fn: TExpr = { kind: "var", name: ext.flat, ty: { kind: "unknown" } };
           return {
             kind: "call", fn, args, ty: ext.returnTy,
@@ -1385,35 +1509,42 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
         }
       }
       const fn = resolveExpr(e.fn, ctx);
+      const builtinId = fn.kind === "field" ? recognizeBuiltin(fn.obj.ty, fn.field) : null;
+      const bSpec = builtinId ? builtinSpec(builtinId) : null;
       const rawArgs = inferLambdaParamTypes(fn, e.args, ctx);
-      // For .push() on a typed array, resolve args with element type context
-      let argCtx = ctx;
-      if (fn.kind === "field" && fn.obj.ty.kind === "array" && fn.field === "push" &&
-          fn.obj.ty.elem.kind === "user") {
-        argCtx = { ...ctx, returnTy: fn.obj.ty.elem };
-      }
-      // Propagate parameter types to arguments for record literal resolution
-      // (enables inline discriminated union construction in function arguments)
+      // Propagate parameter / builtin-slot types to arguments for record literal
+      // resolution and collection element/key/value coercion (e.g., narrowed `T`
+      // or literals passed into `Set<T | null>.has`, `Map<K | null, V>.set`, etc.).
       const paramTypes = fn.kind === "var" && !binding(ctx.env, fn.name) ? ctx.fnParams.get(fn.name) ?? null : null;
       const initial = fn.kind === "field" && fn.field === "reduce" && rawArgs.length >= 2
-        ? resolveExpr(rawArgs[1], argCtx) : undefined;
+        ? resolveExpr(rawArgs[1], ctx) : undefined;
       const callback = callbackContext(fn, initial);
       let args = coerceCallArgs(rawArgs.map((a, i) => {
-        let aCtx = argCtx;
-        if (paramTypes && i < paramTypes.length &&
-            (paramTypes[i].kind === "user" || paramTypes[i].kind === "array" || paramTypes[i].kind === "optional" || paramTypes[i].kind === "nullish")) {
-          aCtx = { ...aCtx, returnTy: paramTypes[i] };
+        const slotTy = (paramTypes && i < paramTypes.length ? paramTypes[i] : null)
+          ?? (bSpec?.argSlot && fn.kind === "field" ? bSpec.argSlot(fn.obj.ty, i) : null);
+        let aCtx = ctx;
+        if (slotTy &&
+            (slotTy.kind === "user" || slotTy.kind === "array" || slotTy.kind === "optional" || slotTy.kind === "nullish")) {
+          aCtx = { ...aCtx, returnTy: slotTy };
         }
         if (i === 0 && a.kind === "lambda" && callback)
           return resolveCallback(a, callback.actual, callback.baseArity, aCtx);
-        return i === 1 && initial ? initial : resolveExpr(a, aCtx);
+        const resolved = i === 1 && initial ? initial : resolveExpr(a, aCtx);
+        if (bSpec?.argSlot && fn.kind === "field") {
+          const bSlot = bSpec.argSlot(fn.obj.ty, i);
+          if (bSlot) return coerceToTargetTy(resolved, bSlot, ctx.typeDecls);
+        }
+        return resolved;
       }), fn, ctx);
-      // Array method `.with(i, v)`: coerce the value arg to the element type
-      // so `arr[i] = v` on `(T|null)[]` wraps `T` → `Some(T)` (and similarly
-      // for synth array-unions). Same shape as the record-field coercion
-      // below: assigning a narrower value into a wider slot.
-      if (fn.kind === "field" && fn.field === "with" && fn.obj.ty.kind === "array" && args.length === 2) {
-        args = [args[0], coerceToTargetTy(args[1], fn.obj.ty.elem, ctx.typeDecls)];
+      if (paramTypes) args = projectStructuralCallArgs(args, paramTypes, ctx);
+      // Keep the underlying synth array-union storage type on `Array.isArray(x)`
+      // arguments even when `x` was already narrowed in flow typing.
+      if (fn.kind === "field" && fn.field === "isArray" &&
+          fn.obj.kind === "var" && fn.obj.name === "Array" && args.length === 1 && args[0].kind === "var") {
+        const storage = storageLookup(ctx.env, args[0].name);
+        if (storage?.kind === "user" && findSynthArrayUnion(storage.name, ctx.typeDecls)) {
+          args = [{ ...args[0], ty: storage }];
+        }
       }
       let ty = inferMethodReturnTy(fn, args, ctx);
       // For same-file function calls, use the known return type
@@ -1439,7 +1570,6 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
           && (filterSentinel === "both" || filterSentinel === optAbsent(fn.obj.ty.elem))) {
         return { kind: "call", fn: { ...fn, field: "filterSome" }, args: [], ty: { kind: "array", elem: fn.obj.ty.elem.inner }, callKind: "method" };
       }
-      const builtinId = fn.kind === "field" ? recognizeBuiltin(fn.obj.ty, fn.field) : null;
       return { kind: "call", fn, args, ty, callKind: classifyCall(e.fn, ctx),
         ...(builtinId ? { builtinId } : {}),
         ...(paramTypes ? { paramTys: paramTypes } : {}) };
@@ -1455,7 +1585,7 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
         if (member) return member;
       }
       const obj = resolveExpr(e.obj, ctx);
-      const idx = resolveExpr(e.idx, ctx);
+      let idx = resolveExpr(e.idx, ctx);
       // Map bracket access: default to Option<V>. But if the enclosing scope has a
       // known `k in m` atom matching (obj, idx) — from requires, assert, an enclosing
       // `if (k in m)`, or a loop invariant — narrow to V. Parallels how `narrowedPaths`
@@ -1475,6 +1605,7 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
         }
         idxTy = elems[idx.value];
       } else if (obj.ty.kind === "map") {
+        idx = coerceToTargetTy(idx, obj.ty.key, ctx.typeDecls);
         const objPath = asTExprAccessPath(obj);
         const idxPath = asTExprAccessPath(idx);
         const narrowed = objPath && idxPath && ctx.narrowedIndices.some(
@@ -1513,10 +1644,11 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
         }
       }
 
-      // A variant narrowing on the object picks the field's type from that
-      // variant (a shared field name can have a different type per variant).
+      // A variant narrowing on the object pins `ofVariant` (even when `myPath`
+      // itself was also narrowed in `narrowedPaths`, e.g. a nested union) and
+      // supplies the field's type when not already narrowed.
       let ofVariant: string | undefined;
-      if (ty.kind === "unknown" && ctx.narrowedPaths.length > 0 && obj.ty.kind === "user") {
+      if (ctx.narrowedPaths.length > 0 && obj.ty.kind === "user") {
         const objPath = asRawAccessPath(e.obj);
         let np: NarrowedPath | undefined;
         if (objPath) {
@@ -1528,7 +1660,10 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
         if (np?.variant) {
           const decl = findDecl(ctx, tyBaseName(obj.ty.name));
           const f = decl?.variants?.find(v => v.name === np.variant)?.fields.find(f => f.name === e.field);
-          if (f?.type) { ty = f.type; ofVariant = np.variant; }
+          if (f?.type) {
+            ofVariant = np.variant;
+            if (ty.kind === "unknown") ty = f.type;
+          }
         }
       }
 
@@ -1586,7 +1721,8 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
           chain.push({ kind: "field", name: step.name, ty: fieldTy });
           stepInTy = fieldTy;
         } else if (step.kind === "index") {
-          const idx = resolveExpr(step.idx, ctx);
+          let idx = resolveExpr(step.idx, ctx);
+          if (stepInTy.kind === "map") idx = coerceToTargetTy(idx, stepInTy.key, ctx.typeDecls);
           const idxTy: Ty = stepInTy.kind === "array" ? stepInTy.elem
             : stepInTy.kind === "string" ? { kind: "string" }
             : stepInTy.kind === "map" ? { kind: "optional", inner: stepInTy.value }
@@ -1609,15 +1745,22 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
               : ((obj.ty.kind === "optional" || obj.ty.kind === "nullish") ? obj.ty.inner : obj.ty);
             const fakeObj: TExpr = { kind: "var", name: "_chain_recv", ty: priorInTy };
             const fakeFn: TExpr = { kind: "field", obj: fakeObj, field: lastField.name, ty: lastField.ty };
+            const builtinId = recognizeBuiltin(priorInTy, lastField.name);
+            const bSpec = builtinId ? builtinSpec(builtinId) : null;
             rawArgs = inferLambdaParamTypes(fakeFn, rawArgs);
             const initial = lastField.name === "reduce" && rawArgs.length >= 2 ? resolveExpr(rawArgs[1], ctx) : undefined;
             const callback = callbackContext(fakeFn, initial);
-            const args = rawArgs.map((a, i) => i === 0 && a.kind === "lambda" && callback
-              ? resolveCallback(a, callback.actual, callback.baseArity, ctx)
-              : i === 1 && initial ? initial : resolveExpr(a, ctx));
+            const args = rawArgs.map((a, i) => {
+              const slotTy = bSpec?.argSlot ? bSpec.argSlot(priorInTy, i) : null;
+              const aCtx = slotTy && (slotTy.kind === "user" || slotTy.kind === "array" || slotTy.kind === "optional" || slotTy.kind === "nullish")
+                ? { ...ctx, returnTy: slotTy } : ctx;
+              const resolved = i === 0 && a.kind === "lambda" && callback
+                ? resolveCallback(a, callback.actual, callback.baseArity, aCtx)
+                : i === 1 && initial ? initial : resolveExpr(a, aCtx);
+              return slotTy ? coerceToTargetTy(resolved, slotTy, ctx.typeDecls) : resolved;
+            });
             callTy = inferMethodReturnTy(fakeFn, args, ctx);
             callKind = "method";
-            const builtinId = recognizeBuiltin(priorInTy, lastField.name);
             chain.push({ kind: "call", args, ty: callTy, callKind,
               ...(builtinId ? { builtinId } : {}) });
             stepInTy = callTy;
@@ -1647,7 +1790,8 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
 
     case "record": {
       const spread = e.spread ? resolveExpr(e.spread, ctx) : null;
-      const asserted = e.assertedTsType && expandAlias(parseTsType(e.assertedTsType), ctx.typeDecls);
+      const assertedRaw = e.assertedType ?? (e.assertedTsType ? parseSpecType(e.assertedTsType) : undefined);
+      const asserted = assertedRaw && expandAlias(assertedRaw, ctx.typeDecls);
       const assertedUnion = asserted && asserted.kind === "user" &&
         declOfKind(ctx.typeDecls, asserted.name, "discriminated-union");
       const ty = spread ? spread.ty : assertedUnion ? asserted : { kind: "unknown" as const };
@@ -1665,16 +1809,26 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       const returnTyUnwrapped = (ctx.returnTy.kind === "optional" || ctx.returnTy.kind === "nullish") ? ctx.returnTy.inner : ctx.returnTy;
       const recordTy = ty.kind === "user" ? ty : returnTyUnwrapped.kind === "user" ? returnTyUnwrapped : null;
       const decl = recordTy ? declOfKind(ctx.typeDecls, recordTy.name, "record") : undefined;
-      // Union-variant literal in union-typed context (a constructed IR node,
-      // `{ kind: "if", … }: TStmt`): contextual field types come from the
-      // variant the literal's discriminant field selects.
+      // Union-variant literal or spread in union-typed context: contextual field
+      // types come from the variant selected by the literal's discriminant field,
+      // or from the narrowed variant of the spread path.
       let declFields = decl?.fields;
+      let ofVariant: string | undefined;
+      let spreadOfVariant: string | undefined;
       if (!declFields && recordTy) {
-        const udecl = declOfKind(ctx.typeDecls, recordTy.name, "discriminated-union");
+        const udecl = declOfKind(ctx.typeDecls, tyBaseName(recordTy.name), "discriminated-union");
         if (udecl?.discriminant && udecl.variants) {
+          if (spread) {
+            const spPath = asTExprAccessPath(spread);
+            spreadOfVariant = spPath ? lookupNarrowedVariant(spPath, ctx) : undefined;
+          }
           const tagRaw = e.fields.find(f => f.name === udecl.discriminant)?.value;
-          if (tagRaw?.kind === "str") {
-            declFields = udecl.variants.find(v => v.name === tagRaw.value)?.fields;
+          if (tagRaw?.kind === "str" || tagRaw?.kind === "bool") {
+            ofVariant = String(tagRaw.value);
+            declFields = udecl.variants.find(v => v.name === ofVariant)?.fields;
+          } else if (spread && !tagRaw && spreadOfVariant) {
+            ofVariant = spreadOfVariant;
+            declFields = udecl.variants.find(v => v.name === spreadOfVariant)?.fields;
           }
         }
       }
@@ -1706,7 +1860,14 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
         }
         return { name: f.name, value };
       });
-      return { kind: "record", spread, fields, ty: recordTy ?? ty };
+      return {
+        kind: "record",
+        spread,
+        fields,
+        ty: recordTy ?? ty,
+        ...(ofVariant ? { ofVariant } : {}),
+        ...(spreadOfVariant ? { spreadOfVariant } : {}),
+      };
     }
 
     case "recordMerge":
@@ -1720,14 +1881,14 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       return { kind: "var", name: "\\result", ty: lookup(ctx.env, "\\result") ?? ctx.returnTy };
 
     case "forall": {
-      const varTy: Ty = e.varType !== "int" ? parseTsType(e.varType)
+      const varTy: Ty = e.varType !== "int" ? parseSpecType(e.varType)
         : inferQuantVarType(e.var, e.body, ctx) ?? { kind: "int" };
       const bound = quantified(ctx.env, e.var, varTy);
       return { kind: "forall", var: bound.emittedName ?? e.var, varTy, body: resolveExpr(e.body, withEnv(ctx, bound)), ty: { kind: "bool" } };
     }
 
     case "exists": {
-      const varTy: Ty = e.varType !== "int" ? parseTsType(e.varType)
+      const varTy: Ty = e.varType !== "int" ? parseSpecType(e.varType)
         : inferQuantVarType(e.var, e.body, ctx) ?? { kind: "int" };
       const bound = quantified(ctx.env, e.var, varTy);
       return { kind: "exists", var: bound.emittedName ?? e.var, varTy, body: resolveExpr(e.body, withEnv(ctx, bound)), ty: { kind: "bool" } };
@@ -1774,7 +1935,7 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       // Resolve lambda params — types from explicit annotation or unknown
       const params = e.params.map(p => ({
         name: p.name,
-        ty: p.tsType ? parseTsType(p.tsType) : { kind: "unknown" as const },
+        ty: p.type ?? (p.tsType ? parseSpecType(p.tsType) : { kind: "unknown" as const }),
         ...(p.rest ? { rest: true as const } : {}),
         ...(p.defaultValue ? { defaultValue: resolveExpr(p.defaultValue, ctx) } : {}),
       }));
@@ -1784,15 +1945,15 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
       // Set returnTy to the lambda's own return annotation (not the enclosing
       // function's), so return-position record literals in the body resolve to
       // their named type rather than an anonymous tuple.
-      const lambdaReturnTy: Ty = e.returnTsType ? parseTsType(e.returnTsType) : { kind: "unknown" };
+      const lambdaReturnTy: Ty = e.returnTy ?? (e.returnTsType ? parseSpecType(e.returnTsType) : { kind: "unknown" });
       const lambdaCtx = { ...withEnv(ctx, lambdaEnv), inLambda: true, returnTy: lambdaReturnTy };
       // Body: expression (wrap in return stmt) or statement block
       const body = Array.isArray(e.body)
         ? resolveBlock(e.body, lambdaCtx)
         : [{ kind: "return" as const, value: resolveExpr(e.body, lambdaCtx) }];
-      // Carry the lambda's type as a fn type when its return is known, so chained
-      // array methods (`.map(...).filter(...)`) can infer downstream element types.
-      const lamTy: Ty = e.returnTsType
+      // Carry the lambda's type as a fn type when its return is known (or when
+      // zero-parameter, so Lean emits `Unit → T` and applies `()` at call sites).
+      const lamTy: Ty = (e.returnTy || e.returnTsType) || params.length === 0
         ? { kind: "fn", params: params.map(p => p.ty), result: lambdaReturnTy }
         : { kind: "unknown" };
       return { kind: "lambda", params, body, ty: lamTy };
@@ -1823,9 +1984,17 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
           elseCtx = withEnv(elseCtx, refine(elseCtx.env, n.varName, n.innerTy));
         }
       }
-      const negPaths = collectEarlyReturnPathNarrowings(cond);
+      const negPaths = collectEarlyReturnPathNarrowings(cond, ctx);
       if (negPaths.length > 0) {
         elseCtx = { ...elseCtx, narrowedPaths: [...elseCtx.narrowedPaths, ...negPaths] };
+      }
+      const elseVariant = discriminantVariantWhen(cond, false, ctx);
+      if (elseVariant) {
+        elseCtx = { ...elseCtx, narrowedPaths: [...elseCtx.narrowedPaths, elseVariant] };
+      }
+      const elseSynth = synthVariantWhen(cond, false, ctx);
+      if (elseSynth) {
+        elseCtx = applyVariantNarrowing(elseCtx, elseSynth.path, elseSynth.unionTy, elseSynth.variant);
       }
       // Map-index narrowing: `k in m` in the cond narrows the then-branch; `!(k in m)`
       // narrows the else-branch. Parallel to the if-statement hook in resolveStmt.
@@ -1841,13 +2010,13 @@ function resolveExprInner(e: RawExpr, ctx: Ctx): TExpr {
     }
 
     case "emptyCollection": {
-      const ty = parseTsType(e.tsType);
+      const ty = e.type ?? parseSpecType(e.tsType);
       const elems = e.initElems ? e.initElems.map(el => resolveExpr(el, ctx)) : [];
       return { kind: "arrayLiteral", elems, ty };
     }
 
     case "havoc":
-      return { kind: "havoc", ty: resolveTsType(e.tsType, ctx.overrides) };
+      return { kind: "havoc", ty: e.type ?? parseSpecType(e.tsType) };
   }
 }
 
@@ -1857,12 +2026,17 @@ function resolveSpec(spec: string, ctx: Ctx): TExpr {
   return resolveExpr(parseExpr(spec), ctx);
 }
 
-function resolveSpecs(specs: string[], ctx: Ctx): TExpr[] {
+function resolveSpecs(specs: string[], ctx: Ctx, threadAcrossSpecs = false): TExpr[] {
   const result: TExpr[] = [];
+  let specCtx = ctx;
   for (const spec of specs) {
+    let clauseCtx = specCtx;
     for (const clause of splitConj(parseExpr(spec))) {
-      result.push(resolveExpr(clause, ctx));
+      const resolved = resolveExpr(clause, clauseCtx);
+      result.push(resolved);
+      clauseCtx = collectAndChainNarrowings(resolved, clauseCtx);
     }
+    if (threadAcrossSpecs) specCtx = clauseCtx;
   }
   return result;
 }
@@ -1918,25 +2092,70 @@ function collectAssignedRootsRaw(stmts: RawStmt[], out = new Set<string>()): Set
   return out;
 }
 
-/** Restore any narrowed optional variable in `roots` back to its declared
- *  `storageTy`, and drop `narrowedPaths` whose root is in `roots`. Used when
- *  entering a loop (`while`/`forof`) or exiting a control-flow statement that
- *  may reassign or clear a previously narrowed variable. */
+/** True when `npPath` is at or below dotted `target` (e.g. target `"b.count"`
+ *  invalidates `b.count` and `b.count.x`, but preserves `b` itself). */
+function pathAtOrBelowTarget(npPath: AccessPath, target: string): boolean {
+  const parts = target.split(".");
+  if (npPath.rootVar !== parts[0]) return false;
+  const targetFields = parts.slice(1);
+  if (npPath.fields.length < targetFields.length) return false;
+  return targetFields.every((f, i) => npPath.fields[i] === f);
+}
+
+/** Collect whole-variable assignment roots and dotted field-write targets
+ *  separately, so sub-field writes (`sh.y = 10`) do not drop the parent's
+ *  discriminated-union variant narrowing while whole-var writes (`sh = ...`) do. */
+function collectAssignedTargetsRaw(
+  stmts: RawStmt[],
+  wholeRoots = new Set<string>(),
+  dottedTargets = new Set<string>(),
+): { wholeRoots: Set<string>; dottedTargets: Set<string> } {
+  for (const s of stmts) {
+    if (s.kind === "assign") {
+      if (s.target.includes(".")) dottedTargets.add(s.target);
+      else wholeRoots.add(s.target);
+    } else if (s.kind === "if") {
+      collectAssignedTargetsRaw(s.then, wholeRoots, dottedTargets);
+      collectAssignedTargetsRaw(s.else, wholeRoots, dottedTargets);
+    } else if (s.kind === "while" || s.kind === "forof") {
+      collectAssignedTargetsRaw(s.body, wholeRoots, dottedTargets);
+    } else if (s.kind === "switch") {
+      for (const c of s.cases) collectAssignedTargetsRaw(c.body, wholeRoots, dottedTargets);
+      collectAssignedTargetsRaw(s.defaultBody, wholeRoots, dottedTargets);
+    }
+  }
+  return { wholeRoots, dottedTargets };
+}
+
+/** Restore any narrowed optional/nullish/synth-union variable in `wholeRoots`
+ *  back to its declared `storageTy`, drop `narrowedPaths` rooted at `wholeRoots`,
+ *  and drop `narrowedPaths` at or below any `dottedTargets` (preserving parent
+ *  discriminated-union variants on sub-field writes). */
 function invalidateNarrowings(
   env: Env | null,
   narrowedPaths: NarrowedPath[],
-  roots: Set<string>,
+  wholeRoots: Set<string>,
+  dottedTargets: Set<string>,
+  typeDecls: TypeDeclInfo[],
 ): { env: Env | null; narrowedPaths: NarrowedPath[] } {
-  if (roots.size === 0) return { env, narrowedPaths };
+  if (wholeRoots.size === 0 && dottedTargets.size === 0) return { env, narrowedPaths };
   let nextEnv = env;
-  for (const root of roots) {
+  for (const root of wholeRoots) {
     const cur = lookup(nextEnv, root);
     const storage = storageLookup(nextEnv, root);
-    if ((storage?.kind === "optional" || storage?.kind === "nullish") && cur && !tyEqual(cur, storage)) {
+    const isNarrowableStorage = storage?.kind === "optional" || storage?.kind === "nullish" ||
+      (storage?.kind === "user" && !!findSynthArrayUnion(storage.name, typeDecls));
+    if (isNarrowableStorage && cur && !tyEqual(cur, storage)) {
       nextEnv = refine(nextEnv, root, storage);
     }
   }
-  const nextPaths = narrowedPaths.filter(np => !roots.has(np.path.rootVar));
+  const nextPaths = narrowedPaths.filter(np => {
+    if (wholeRoots.has(np.path.rootVar)) return false;
+    for (const dt of dottedTargets) {
+      if (pathAtOrBelowTarget(np.path, dt)) return false;
+    }
+    return true;
+  });
   return { env: nextEnv, narrowedPaths: nextPaths };
 }
 
@@ -2002,35 +2221,85 @@ function resolveBlock(stmts: RawStmt[], ctx: Ctx): TStmt[] {
     const [typed, nextEnv] = resolveStmt(s, currentCtx);
     result.push(typed);
     env = nextEnv;
-    // Assignment narrowing (#340): assigning a non-optional value to an optional
-    // variable narrows it for subsequent statements; assigning `undefined` or an
-    // optional restores its declared optional storage type. Also drop stale
-    // narrowedPaths rooted at any assigned target (including field writes).
+    // Assignment narrowing (#340) & union reassignment tracking (#405):
+    // assigning a non-optional value to an optional variable or field narrows it;
+    // assigning a variant literal / same-variant spread / synth array-union
+    // updates its narrowed variant; dotted field writes only drop narrowings
+    // at or below the written path (keeping the parent's union variant intact).
     if (s.kind === "assign") {
-      const root = s.target.split(".")[0]!;
-      narrowedPaths = narrowedPaths.filter(np => np.path.rootVar !== root);
-      if (!s.target.includes(".")) {
+      const parts = s.target.split(".");
+      const root = parts[0]!;
+      const isNullLit = s.value.kind === "var" && s.value.name === "null";
+      const isUndefLit = s.value.kind === "var" && s.value.name === "undefined";
+      const isDefinitelyPresent = (targetStorage: Ty): boolean => {
+        if (isUndefLit || isNullLit) return false;
+        const rhsCtx: Ctx = { ...currentCtx, returnTy: targetStorage };
+        const rawTy = resolveExpr(s.value, rhsCtx).ty;
+        return rawTy.kind !== "optional" && rawTy.kind !== "nullish" &&
+          rawTy.kind !== "void" && rawTy.kind !== "null" && rawTy.kind !== "unknown";
+      };
+      if (parts.length > 1) {
+        const rootStorage = storageLookup(env, root);
+        const udecl = rootStorage?.kind === "user"
+          ? declOfKind(ctx.typeDecls, tyBaseName(rootStorage.name), "discriminated-union")
+          : undefined;
+        const writesDiscriminant = parts.length === 2 && udecl?.discriminant === parts[1];
+        narrowedPaths = narrowedPaths.filter(np =>
+          writesDiscriminant ? np.path.rootVar !== root : !pathAtOrBelowTarget(np.path, s.target));
+        // Dotted assignment to an optional/nullish field (`box.val = 5`):
+        // re-narrow that path when the RHS is definitely present.
+        let fieldTy: Ty | undefined = rootStorage;
+        for (let i = 1; i < parts.length && fieldTy; i++) {
+          const cur = (fieldTy.kind === "optional" || fieldTy.kind === "nullish") ? fieldTy.inner : fieldTy;
+          fieldTy = lookupFieldTy(cur, parts[i]!, currentCtx).ty;
+        }
+        if ((fieldTy?.kind === "optional" || fieldTy?.kind === "nullish") && isDefinitelyPresent(fieldTy)) {
+          narrowedPaths = [...narrowedPaths, { path: { rootVar: root, fields: parts.slice(1) }, narrowedTy: fieldTy.inner }];
+        }
+      } else {
+        narrowedPaths = narrowedPaths.filter(np => np.path.rootVar !== s.target);
         const storage = storageLookup(env, s.target);
         if (storage?.kind === "optional" || storage?.kind === "nullish") {
-          const isNullLit = s.value.kind === "var" && s.value.name === "null";
-          const isUndefLit = s.value.kind === "var" && s.value.name === "undefined";
-          const rhsCtx: Ctx = { ...currentCtx, returnTy: storage };
-          const rawTy = isUndefLit ? { kind: "void" as const } : isNullLit ? { kind: "null" as const } : resolveExpr(s.value, rhsCtx).ty;
-          if (!isUndefLit && !isNullLit && rawTy.kind !== "optional" && rawTy.kind !== "nullish" &&
-              rawTy.kind !== "void" && rawTy.kind !== "null" && rawTy.kind !== "unknown") {
-            env = refine(env, s.target, storage.inner);
+          env = refine(env, s.target, isDefinitelyPresent(storage) ? storage.inner : storage);
+        } else if (storage?.kind === "user") {
+          const synth = findSynthArrayUnion(storage.name, ctx.typeDecls);
+          if (synth && typed.kind === "assign") {
+            if (typed.value.kind === "call" && typed.value.fn.kind === "var" &&
+                (typed.value.fn.name === "ArrayBranch" || typed.value.fn.name === "NonArrayBranch")) {
+              const payload = synthVariantPayloadTy(storage, typed.value.fn.name, currentCtx);
+              if (payload) {
+                env = refine(env, s.target, payload);
+                narrowedPaths = [...narrowedPaths, { path: { rootVar: s.target, fields: [] }, narrowedTy: payload, variant: typed.value.fn.name }];
+              } else {
+                env = refine(env, s.target, storage);
+              }
+            } else {
+              env = refine(env, s.target, storage);
+            }
           } else {
-            env = refine(env, s.target, storage);
+            const udecl = declOfKind(ctx.typeDecls, tyBaseName(storage.name), "discriminated-union");
+            if (udecl?.discriminant && typed.kind === "assign" && typed.value.kind === "record") {
+              let nextVariant: string | undefined;
+              const tagF = typed.value.fields.find(f => f.name === udecl.discriminant);
+              if (tagF?.value.kind === "str" || tagF?.value.kind === "bool") {
+                nextVariant = String(tagF.value.value);
+              } else if (typed.value.spread && typed.value.ofVariant && !tagF) {
+                nextVariant = typed.value.ofVariant;
+              }
+              if (nextVariant) {
+                narrowedPaths = [...narrowedPaths, { path: { rootVar: s.target, fields: [] }, narrowedTy: storage, variant: nextVariant }];
+              }
+            }
           }
         }
       }
     }
     // Control-flow invalidation: if an `if`/`while`/`forof`/`switch` may assign
-    // a narrowed variable or path, restore its declared optional storage type
-    // before subsequent statements (definite-assignment guards re-narrow below).
+    // a narrowed variable or path, restore its declared storage type before
+    // subsequent statements (definite-assignment guards re-narrow below).
     if (s.kind === "if" || s.kind === "while" || s.kind === "forof" || s.kind === "switch") {
-      const mutated = collectAssignedRootsRaw([s]);
-      const inv = invalidateNarrowings(env, narrowedPaths, mutated);
+      const { wholeRoots, dottedTargets } = collectAssignedTargetsRaw([s]);
+      const inv = invalidateNarrowings(env, narrowedPaths, wholeRoots, dottedTargets, ctx.typeDecls);
       env = inv.env;
       narrowedPaths = inv.narrowedPaths;
     }
@@ -2054,15 +2323,21 @@ function resolveBlock(stmts: RawStmt[], ctx: Ctx): TStmt[] {
         for (const n of collectEarlyReturnNarrowings(typed.cond)) {
           env = refine(env, n.varName, n.innerTy);
         }
-        for (const np of collectEarlyReturnPathNarrowings(typed.cond)) {
+        for (const np of collectEarlyReturnPathNarrowings(typed.cond, currentCtx)) {
           if (np.path.fields.length === 0) {
             env = refine(env, np.path.rootVar, np.narrowedTy);
           } else {
             narrowedPaths = [...narrowedPaths, np];
           }
         }
-        const nv = negatedVariantCheck(typed.cond);
+        const nv = discriminantVariantWhen(typed.cond, false, currentCtx);
         if (nv) narrowedPaths = [...narrowedPaths, nv];
+        const nsv = synthVariantWhen(typed.cond, false, currentCtx);
+        if (nsv) {
+          const updated = applyVariantNarrowing({ ...currentCtx, env, narrowedPaths }, nsv.path, nsv.unionTy, nsv.variant);
+          env = updated.env;
+          narrowedPaths = updated.narrowedPaths;
+        }
       }
       // Map-index narrowing: `if (!(k in m)) return;` means `k in m` holds in rest.
       if (typed.kind === "if") {
@@ -2096,7 +2371,12 @@ function resolveStmt(s: RawStmt, ctx: Ctx): [TStmt, Env | null] {
       // expandAlias unwraps an array/collection alias (`type Board = number[]`)
       // to its underlying type, so array methods / index-assignment on the
       // local dispatch correctly (params get the same treatment, see makeParams).
-      const declTy = expandAlias(resolveTsType(s.tsType, ctx.overrides, s.name), ctx.typeDecls);
+      const declTy = expandAlias(
+        ctx.overrides.has(s.name)
+          ? parseSpecType(ctx.overrides.get(s.name)!)
+          : (s.type ?? parseSpecType(s.tsType)),
+        ctx.typeDecls,
+      );
       // Propagate declared type as returnTy so nested record expressions resolve
       // union variants correctly (e.g., EffectState → mode: EffectMode → { kind:
       // 'Idle' }). Arrays too, so `const xs: Foo[] = [{...}]` threads the element
@@ -2149,17 +2429,52 @@ function resolveStmt(s: RawStmt, ctx: Ctx): [TStmt, Env | null] {
         throw new Error(`assignment to callback binding '${s.target}' requires materializing its argument value`);
       }
       entry?.onRead?.();
+      // For dotted writes (`sh.value = ...`, `b.sh.value = ...`), record any
+      // narrowed union variant at each step along the owner chain so
+      // transform/emit use the right collision-renamed destructors and Lean
+      // inductive match-updates at arbitrary nesting depth.
+      let ownerVariants: (string | undefined)[] | undefined;
+      let targetTy: Ty = storageLookup(ctx.env, s.target) ?? { kind: "unknown" as const };
+      if (s.target.includes(".") && !s.target.startsWith("this.")) {
+        const parts = s.target.split(".");
+        const root = parts[0]!;
+        const fields = parts.slice(1);
+        const variants: (string | undefined)[] = [];
+        let curTy: Ty | undefined = storageLookup(ctx.env, root);
+        for (let i = 0; i < fields.length; i++) {
+          const v = lookupNarrowedVariant({ rootVar: root, fields: fields.slice(0, i) }, ctx);
+          variants.push(v);
+          if (curTy) {
+            const unwrapped = (curTy.kind === "optional" || curTy.kind === "nullish") ? curTy.inner : curTy;
+            if (unwrapped.kind === "user") {
+              const decl = findDecl(ctx, tyBaseName(unwrapped.name));
+              if (decl?.kind === "discriminated-union" && decl.variants) {
+                const variant = (v ? decl.variants.find(vi => vi.name === v) : undefined)
+                  ?? decl.variants.find(vi => vi.fields.some(f => f.name === fields[i]));
+                curTy = variant?.fields.find(f => f.name === fields[i])?.type;
+              } else if (decl?.kind === "record" && decl.fields) {
+                curTy = decl.fields.find(f => f.name === fields[i])?.type;
+              } else {
+                curTy = undefined;
+              }
+            } else {
+              curTy = undefined;
+            }
+          }
+        }
+        if (variants.some(v => v !== undefined)) ownerVariants = variants;
+        if (curTy) targetTy = curTy;
+      }
       // Coerce RHS against the variable's declared storage type (not a narrowed
       // flow type) so reassignments like `v = 7` or `v = undefined` stay typed
       // as `Option<T>`.
-      const targetTy = storageLookup(ctx.env, s.target) ?? { kind: "unknown" as const };
       // Propagate the target's type as returnTy, mirroring the annotated-let
       // case, so record/union literals and array literals in the RHS resolve
       // to their named datatypes.
       const valueCtx = (targetTy.kind === "user" || targetTy.kind === "array" || targetTy.kind === "optional" || targetTy.kind === "nullish")
         ? { ...ctx, returnTy: targetTy } : ctx;
       const value = coerceToTargetTy(resolveExpr(s.value, valueCtx), targetTy, ctx.typeDecls);
-      return [{ kind: "assign", target: entry?.emittedName ?? s.target, value }, ctx.env];
+      return [{ kind: "assign", target: entry?.emittedName ?? s.target, value, ...(ownerVariants ? { ownerVariants } : {}) }, ctx.env];
     }
 
     case "return": {
@@ -2192,9 +2507,17 @@ function resolveStmt(s: RawStmt, ctx: Ctx): [TStmt, Env | null] {
           elseCtx = withEnv(elseCtx, refine(elseCtx.env, n.varName, n.innerTy));
         }
       }
-      const negPaths = collectEarlyReturnPathNarrowings(resolvedCond);
+      const negPaths = collectEarlyReturnPathNarrowings(resolvedCond, ctx);
       if (negPaths.length > 0) {
         elseCtx = { ...elseCtx, narrowedPaths: [...elseCtx.narrowedPaths, ...negPaths] };
+      }
+      const elseVariant = discriminantVariantWhen(resolvedCond, false, ctx);
+      if (elseVariant) {
+        elseCtx = { ...elseCtx, narrowedPaths: [...elseCtx.narrowedPaths, elseVariant] };
+      }
+      const elseSynth = synthVariantWhen(resolvedCond, false, ctx);
+      if (elseSynth) {
+        elseCtx = applyVariantNarrowing(elseCtx, elseSynth.path, elseSynth.unionTy, elseSynth.variant);
       }
       // Narrow map index access across `k in m` / `!(k in m)` in the cond:
       // positive atoms (from `k in m` or &&-chains containing it) → then-branch;
@@ -2208,8 +2531,8 @@ function resolveStmt(s: RawStmt, ctx: Ctx): [TStmt, Env | null] {
       // Any variable or path mutated inside the loop body cannot keep a pre-loop
       // narrowing across iterations (including inside the loop condition and
       // invariants on back-edges).
-      const loopMutated = collectAssignedRootsRaw(s.body);
-      const loopInv = invalidateNarrowings(ctx.env, ctx.narrowedPaths, loopMutated);
+      const { wholeRoots, dottedTargets } = collectAssignedTargetsRaw(s.body);
+      const loopInv = invalidateNarrowings(ctx.env, ctx.narrowedPaths, wholeRoots, dottedTargets, ctx.typeDecls);
       const loopCtx: Ctx = { ...ctx, env: loopInv.env, narrowedPaths: loopInv.narrowedPaths };
       const whileSpecCtx = { ...loopCtx, inSpec: true };
       const resolvedInvariants = resolveSpecs(s.invariants, whileSpecCtx);
@@ -2258,8 +2581,8 @@ function resolveStmt(s: RawStmt, ctx: Ctx): [TStmt, Env | null] {
       const count = ctx.forofCounts.get(s.names[0]) ?? 0;
       ctx.forofCounts.set(s.names[0], count + 1);
       const idxName = freshName(`_${s.names[0]}_idx${count === 0 ? "" : count + 1}`);
-      const loopMutated = collectAssignedRootsRaw(s.body);
-      const loopInv = invalidateNarrowings(ctx.env, ctx.narrowedPaths, loopMutated);
+      const { wholeRoots, dottedTargets } = collectAssignedTargetsRaw(s.body);
+      const loopInv = invalidateNarrowings(ctx.env, ctx.narrowedPaths, wholeRoots, dottedTargets, ctx.typeDecls);
       env = loopInv.env;
       env = extend(env, idxName, { kind: "nat" });
       for (let j = 0; j < s.names.length; j++) {
@@ -2277,21 +2600,30 @@ function resolveStmt(s: RawStmt, ctx: Ctx): [TStmt, Env | null] {
     case "throw":
       return [{ kind: "throw" }, ctx.env];
 
-    case "switch":
-      return [{
-        kind: "switch", expr: resolveExpr(s.expr, ctx), discriminant: s.discriminant,
-        cases: s.cases.map(c => ({ label: c.label, body: resolveBlock(c.body, ctx) })),
-        defaultBody: resolveBlock(s.defaultBody, ctx),
-      }, ctx.env];
+    case "switch": {
+      const expr = resolveExpr(s.expr, ctx);
+      const decl = expr.ty.kind === "user" ? findDecl(ctx, tyBaseName(expr.ty.name)) : undefined;
+      const path = decl?.kind === "discriminated-union" && decl.discriminant === s.discriminant
+        ? asTExprAccessPath(expr) : null;
+      const withVariant = (variant: string | undefined): Ctx =>
+        path && variant ? { ...ctx, narrowedPaths: [
+          ...ctx.narrowedPaths, { path, narrowedTy: expr.ty, variant },
+        ] } : ctx;
+      const cases = s.cases.map(c => ({ label: c.label, body: resolveBlock(c.body, withVariant(c.label)) }));
+      const defaultVariant = path && decl ? remainingVariant(decl, s.cases.map(c => c.label))?.name : undefined;
+      return [{ kind: "switch", expr, discriminant: s.discriminant, cases,
+        defaultBody: resolveBlock(s.defaultBody, withVariant(defaultVariant)) }, ctx.env];
+    }
 
     case "ghostLet": {
       const specCtx = { ...ctx, inSpec: true };
       // Handle new Set<T>() / new Map<K,V>() constructors
       const collMatch = s.init.match(/^new\s+(Set|Map)<(.+)>\(\)$/);
-      const init = collMatch
-        ? resolveExpr({ kind: "emptyCollection", collectionType: collMatch[1] as "Set" | "Map", tsType: `${collMatch[1]}<${collMatch[2]}>` }, specCtx)
+      const collTsType = collMatch ? `${collMatch[1]}<${collMatch[2]}>` : null;
+      const init = collMatch && collTsType
+        ? resolveExpr({ kind: "emptyCollection", collectionType: collMatch[1] as "Set" | "Map", tsType: collTsType, type: parseSpecType(collTsType), fromSpec: true }, specCtx)
         : resolveExpr(parseExpr(s.init), specCtx);
-      const ty = s.tsType ? parseTsType(s.tsType) : init.ty;
+      const ty = s.tsType ? parseSpecType(s.tsType) : init.ty;
       return [{ kind: "ghostLet", name: s.name, ty, init }, extend(ctx.env, s.name, ty)];
     }
 
@@ -2478,8 +2810,8 @@ function resolveFunction(
 ): TFunction {
 
   const overrides = new Map(fn.typeAnnotations.map(a => [a.name, a.type]));
-  const params: TParam[] = fn.params.map(p => ({ name: p.name, ty: expandAlias(resolveTsType(p.tsType, overrides, p.name), typeDecls) }));
-  const returnTy = expandAlias(resolveTsType(fn.returnType, overrides, "\\result"), typeDecls);
+  const params: TParam[] = fn.params.map(p => ({ name: p.name, ty: expandAlias(resolveRawType(p.type, p.tsType, overrides, p.name), typeDecls) }));
+  const returnTy = expandAlias(resolveRawType(fn.returnTy, fn.returnType, overrides, "\\result"), typeDecls);
 
   let env: Env | null = null;
   // Module-level constants are in scope for every function body. Added before
@@ -2488,7 +2820,7 @@ function resolveFunction(
   if (opts?.thisBinding) env = extend(env, opts.thisBinding.name, opts.thisBinding.ty);
   for (const p of params) env = extend(env, p.name, p.ty);
 
-  const baseCtx: Ctx = { env, typeDecls, overrides, allowResult: false, returnTy, pureFns, fnParams, fnReturns, externs, inSpec: false, inLambda: false, narrowedPaths: [], narrowedIndices: [], forofCounts: new Map() };
+  const baseCtx: Ctx = { env, typeDecls, typeParams: new Set(fn.typeParams), overrides, allowResult: false, returnTy, pureFns, fnParams, fnReturns, externs, inSpec: false, inLambda: false, narrowedPaths: [], narrowedIndices: [], forofCounts: new Map() };
   const requiresCtx: Ctx = { ...baseCtx, inSpec: true };
   const ensuresCtx: Ctx = { ...baseCtx, env: extend(env, "\\result", returnTy), allowResult: true, inSpec: true };
 
@@ -2502,7 +2834,7 @@ function resolveFunction(
   // into the body context and the ensures context — they hold for the whole
   // body (pure fns) and for post-state references in the ensures (map params
   // aren't mutated through their binding in the Dafny translation).
-  const resolvedRequires = resolveSpecs(fn.requires, requiresCtx);
+  const resolvedRequires = resolveSpecs(fn.requires, requiresCtx, true);
   const requiresAtoms = resolvedRequires.flatMap(extractInAtoms);
   const bodyCtx = withInAtoms(baseCtx, requiresAtoms);
   const ensuresCtxNarrowed = withInAtoms(ensuresCtx, requiresAtoms);
@@ -2520,7 +2852,7 @@ function resolveFunction(
 }
 
 function resolveClass(cls: import("./rawir.js").RawClass, typeDecls: TypeDeclInfo[], pureFns: Set<string>, fnParams: Map<string, Ty[]> = new Map(), fnReturns: Map<string, Ty> = new Map(), externs: Map<string, ExternSignature> = new Map(), moduleConstants: Map<string, Ty> = new Map()): import("./typedir.js").TClass {
-  const fields = cls.fields.map(f => ({ name: f.name, ty: expandAlias(parseTsType(f.tsType), typeDecls) }));
+  const fields = cls.fields.map(f => ({ name: f.name, ty: expandAlias(f.type ?? parseSpecType(f.tsType), typeDecls) }));
   // Create a synthetic record type for 'this' so field access resolves
   const thisType: Ty = { kind: "user", name: cls.name };
   const thisDecl: TypeDeclInfo = { name: cls.name, kind: "record", fields: cls.fields.map((f, i) => ({ name: f.name, tsType: f.tsType, type: fields[i].ty })) };
@@ -2550,9 +2882,9 @@ function precomputeFieldTypes(typeDecls: TypeDeclInfo[]) {
 
 function precomputeFieldTypesInner(typeDecls: TypeDeclInfo[]) {
   for (const d of typeDecls) {
-    if (d.fields) for (const f of d.fields) f.type = parseTsType(f.tsType);
-    if (d.variants) for (const v of d.variants) for (const f of v.fields) f.type = parseTsType(f.tsType);
-    if (d.aliasOf && !d.aliasOfTy) d.aliasOfTy = parseTsType(d.aliasOf);
+    if (d.fields) for (const f of d.fields) if (!f.type) f.type = parseSpecType(f.tsType);
+    if (d.variants) for (const v of d.variants) for (const f of v.fields) if (!f.type) f.type = parseSpecType(f.tsType);
+    if (d.aliasOf && !d.aliasOfTy) d.aliasOfTy = parseSpecType(d.aliasOf);
   }
 }
 
@@ -2567,8 +2899,8 @@ export function resolveModule(raw: RawModule): TModule {
   const fnReturns = new Map<string, Ty>();
   for (const fn of raw.functions) {
     const overrides = new Map(fn.typeAnnotations.map(a => [a.name, a.type]));
-    fnParams.set(fn.name, fn.params.map(p => expandAlias(resolveTsType(p.tsType, overrides, p.name), raw.typeDecls)));
-    fnReturns.set(fn.name, expandAlias(resolveTsType(fn.returnType, overrides, "\\result"), raw.typeDecls));
+    fnParams.set(fn.name, fn.params.map(p => expandAlias(resolveRawType(p.type, p.tsType, overrides, p.name), raw.typeDecls)));
+    fnReturns.set(fn.name, expandAlias(resolveRawType(fn.returnTy, fn.returnType, overrides, "\\result"), raw.typeDecls));
   }
   // Externs: resolve param/return types once. For bare-name externs (no dot),
   // also register in fnReturns so ordinary `foo(args)` calls get the right
@@ -2579,8 +2911,8 @@ export function resolveModule(raw: RawModule): TModule {
   // them — including the extern referring to itself, or specs that mention
   // sibling externs.
   for (const ext of raw.externs ?? []) {
-    const params = ext.params.map(p => parseTsType(p.tsType));
-    const returnTy = parseTsType(ext.returnType);
+    const params = ext.params.map(p => p.type ?? parseSpecType(p.tsType));
+    const returnTy = ext.returnTy ?? parseSpecType(ext.returnType);
     externs.set(ext.qualified, { flat: ext.flat, params, returnTy, impure: ext.impure });
     if (!ext.qualified.includes(".")) fnReturns.set(ext.qualified, returnTy);
   }
@@ -2592,7 +2924,7 @@ export function resolveModule(raw: RawModule): TModule {
     for (let i = 0; i < ext.params.length; i++) {
       env = extend(env, ext.params[i].name, sig.params[i]);
     }
-    const baseCtx: Ctx = { env, typeDecls: raw.typeDecls, overrides: new Map(), allowResult: false, returnTy: sig.returnTy, pureFns, fnParams, fnReturns, externs, inSpec: true, inLambda: false, narrowedPaths: [], narrowedIndices: [], forofCounts: new Map() };
+    const baseCtx: Ctx = { env, typeDecls: raw.typeDecls, typeParams: new Set(ext.typeParams), overrides: new Map(), allowResult: false, returnTy: sig.returnTy, pureFns, fnParams, fnReturns, externs, inSpec: true, inLambda: false, narrowedPaths: [], narrowedIndices: [], forofCounts: new Map() };
     const ensuresCtx: Ctx = { ...baseCtx, env: extend(env, "\\result", sig.returnTy), allowResult: true };
     const resolveClauses = (kind: "requires" | "ensures", ctx: Ctx) => ext[kind].map(s => {
       try {
@@ -2613,9 +2945,9 @@ export function resolveModule(raw: RawModule): TModule {
       impure: ext.impure,
     };
   });
-  const emptyCtx: Ctx = { env: null, typeDecls: raw.typeDecls, overrides: new Map(), allowResult: false, returnTy: { kind: "int" }, pureFns, fnParams, fnReturns, externs, inSpec: false, inLambda: false, narrowedPaths: [], narrowedIndices: [], forofCounts: new Map() };
+  const emptyCtx: Ctx = { env: null, typeDecls: raw.typeDecls, typeParams: new Set(), overrides: new Map(), allowResult: false, returnTy: { kind: "int" }, pureFns, fnParams, fnReturns, externs, inSpec: false, inLambda: false, narrowedPaths: [], narrowedIndices: [], forofCounts: new Map() };
   const constants = (raw.constants ?? []).map(c => {
-    const declaredTy = expandAlias(parseTsType(c.tsType), raw.typeDecls);
+    const declaredTy = expandAlias(c.type ?? parseSpecType(c.tsType), raw.typeDecls);
     // Propagate the declared type into the value's resolution context so that
     // record literals on map-typed constants (e.g. `Record<string, number>`)
     // get their `ty` set to `map<...>` rather than `user("...")`.

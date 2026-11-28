@@ -16,7 +16,6 @@
 
 import type { TExpr, TFunction, TModule, TStmt, Ty } from "./typedir.js";
 import type { FieldInfo, TypeDeclInfo } from "./types.js";
-import { parseTsType } from "./types.js";
 
 const ARITH = new Set(["+", "-", "*", "/", "%", "**"]);
 
@@ -40,8 +39,8 @@ function isNullable(ty: Ty | null): ty is Extract<Ty, { kind: "optional" | "null
 }
 
 function fieldInfoTy(f: FieldInfo | null): Ty | null {
-  if (!f) return null;
-  const ty = f.type ?? parseTsType(f.tsType);
+  if (!f?.type) return null;
+  const ty = f.type;
   if (!f.optionalKey) return ty;
   if (ty.kind === "nullish") return ty;
   if (ty.kind === "optional") {
@@ -107,6 +106,38 @@ function isDefinitelyUnwrappedStamp(ty: Ty): boolean {
   return !isNullable(ty) && ty.kind !== "unknown" && ty.kind !== "void" && ty.kind !== "null";
 }
 
+function synthArrayProjection(storage: Ty | null, flowTy: Ty, mod: TModule): { field: string; variant: string } | null {
+  if (!storage || storage.kind !== "user") return null;
+  if (flowTy.kind === "unknown" || flowTy.kind === "void" || flowTy.kind === "null") return null;
+  if (flowTy.kind === "user" && flowTy.name === storage.name) return null;
+  const decl = mod.typeDecls.find(d => d.name === storage.name);
+  if (!decl || decl.kind !== "discriminated-union" || decl.discriminant !== "__isArray__" || !decl.variants) return null;
+  const variantName = flowTy.kind === "array" ? "ArrayBranch" : "NonArrayBranch";
+  const variant = decl.variants.find(v => v.name === variantName);
+  const field = variant?.fields[0]?.name;
+  return field ? { field, variant: variantName } : null;
+}
+
+/** Rewrite an expression whose leaf must keep its union storage type (e.g.,
+ *  `Array.isArray(x)`, `typeof x`, or `tagMatch` scrutinee) while still
+ *  rewriting any optional/synth-union receiver prefix. */
+function rewriteUnionScrutinee(e: TExpr, scope: Scope, mod: TModule): TExpr {
+  const storage = storageTyOf(e, scope, mod);
+  if (e.kind === "var" && storage && synthArrayProjection(storage, e.ty, mod)) {
+    return { ...e, ty: storage };
+  }
+  if (e.kind === "field") {
+    const obj = rewriteExpr(e.obj, scope, mod);
+    const updated: TExpr = obj === e.obj ? e : { ...e, obj };
+    const fStorage = storageTyOf(updated, scope, mod);
+    if (fStorage && synthArrayProjection(fStorage, updated.ty, mod)) {
+      return { ...updated, ty: fStorage };
+    }
+    return updated;
+  }
+  return rewriteExpr(e, scope, mod);
+}
+
 /** Rewrite an expression that is the direct operand of `===`/`!==`/`==`/`!=`
  *  with `undefined` or `null`: never wrap the operand itself in `checkedUnwrap`
  *  (restore its declared `Option<T>` or `Nullish<T>` storage type so
@@ -144,6 +175,10 @@ function rewriteExpr(e: TExpr, scope: Scope, mod: TModule): TExpr {
           return { ...e, ty: storage };
         }
       }
+      const synthProj = synthArrayProjection(storage, e.ty, mod);
+      if (synthProj && storage) {
+        return { kind: "field", obj: { ...e, ty: storage }, field: synthProj.field, ty: e.ty, ofVariant: synthProj.variant };
+      }
       return e;
     }
     case "num": case "bigint": case "str": case "bool": case "havoc":
@@ -163,6 +198,10 @@ function rewriteExpr(e: TExpr, scope: Scope, mod: TModule): TExpr {
         if (storage.kind === "nullish" && updated.ty.kind === "optional" && updated.ty.fromNullish) {
           return { ...updated, ty: storage };
         }
+      }
+      const synthProj = synthArrayProjection(storage, updated.ty, mod);
+      if (synthProj && storage) {
+        return { kind: "field", obj: { ...updated, ty: storage }, field: synthProj.field, ty: updated.ty, ofVariant: synthProj.variant };
       }
       return updated;
     }
@@ -186,17 +225,40 @@ function rewriteExpr(e: TExpr, scope: Scope, mod: TModule): TExpr {
       return { ...e, left, right, ty };
     }
     case "unop": {
-      const expr = rewriteExpr(e.expr, scope, mod);
+      const expr = e.op === "typeof"
+        ? rewriteUnionScrutinee(e.expr, scope, mod)
+        : rewriteExpr(e.expr, scope, mod);
       let ty = e.ty;
       if (e.op === "-" && isNullable(ty) && !isNullable(expr.ty)) ty = expr.ty;
       return { ...e, expr, ty };
     }
-    case "call":
-      return {
-        ...e,
-        fn: rewriteExpr(e.fn, scope, mod),
-        args: e.args.map(a => rewriteExpr(a, scope, mod)),
-      };
+    case "call": {
+      if (e.fn.kind === "field" && e.fn.field === "isArray" &&
+          e.fn.obj.kind === "var" && e.fn.obj.name === "Array" && e.args.length === 1) {
+        return { ...e, args: [rewriteUnionScrutinee(e.args[0]!, scope, mod)] };
+      }
+      const fn = rewriteExpr(e.fn, scope, mod);
+      const args = e.args.map(a => rewriteExpr(a, scope, mod));
+      if (fn.kind === "var" && args.length === 1 && args[0].kind === "checkedUnwrap") {
+        const inner = args[0].expr;
+        // Re-wrapping a same-storage checkedUnwrap (`Some(x.value)` for Option<T>,
+        // `Nullish.Value(x.value)` for Nullish<T>) is a no-op; emit `x` directly.
+        if (fn.name === "Some" && inner.ty.kind === "optional" && !inner.ty.fromNullish) {
+          return inner;
+        }
+        if (fn.name === "NullishValue" && inner.ty.kind === "nullish") {
+          return inner;
+        }
+      }
+      if (fn.kind === "var" && args.length === 1 && args[0].kind === "field" &&
+          ((fn.name === "ArrayBranch" && args[0].ofVariant === "ArrayBranch") ||
+           (fn.name === "NonArrayBranch" && args[0].ofVariant === "NonArrayBranch")) &&
+          args[0].obj.ty.kind === "user" && e.ty.kind === "user" &&
+          args[0].obj.ty.name === e.ty.name) {
+        return args[0].obj;
+      }
+      return { ...e, fn, args };
+    }
     case "record":
       return {
         ...e,
@@ -250,7 +312,7 @@ function rewriteExpr(e: TExpr, scope: Scope, mod: TModule): TExpr {
     case "tagMatch":
       return {
         ...e,
-        scrutinee: rewriteExpr(e.scrutinee, scope, mod),
+        scrutinee: rewriteUnionScrutinee(e.scrutinee, scope, mod),
         cases: e.cases.map(c => ({ ...c, body: rewriteExpr(c.body, scope, mod) })),
         fallthrough: e.fallthrough ? rewriteExpr(e.fallthrough, scope, mod) : null,
       };
@@ -356,7 +418,7 @@ function rewriteStmts(stmts: TStmt[], scope: Scope, mod: TModule): TStmt[] {
       case "tagMatch":
         out.push({
           ...s,
-          scrutinee: rewriteExpr(s.scrutinee, cur, mod),
+          scrutinee: rewriteUnionScrutinee(s.scrutinee, cur, mod),
           cases: s.cases.map(c => ({ ...c, body: rewriteStmts(c.body, cur, mod) })),
           fallthrough: rewriteStmts(s.fallthrough, cur, mod),
         });

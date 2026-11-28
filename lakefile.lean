@@ -54,5 +54,7 @@ lean_lib Examples where
     `«arrayFind.types», `«arrayFind.def»,
     `«ctorName.types», `«ctorName.def»,
     `«switchEnumField.types», `«switchEnumField.def», `«switchEnumField.proof»,
-    `«mathTruncRound.types», `«mathTruncRound.def», `«mathTruncRound.proof»
+    `«mathTruncRound.types», `«mathTruncRound.def», `«mathTruncRound.proof»,
+    `«optionReassign.types», `«optionReassign.def», `«optionReassign.proof»,
+    `«unionReassign.types», `«unionReassign.def», `«unionReassign.proof»
   ]
